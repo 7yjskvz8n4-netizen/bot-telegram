@@ -15,6 +15,7 @@ ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
 # =========================
 
 def send(msg):
+
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
     requests.post(
@@ -30,6 +31,7 @@ def send(msg):
 # =========================
 
 def poisson_prob(k, lam):
+
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
 
 # =========================
@@ -53,12 +55,17 @@ def run_bot():
     data = response.json()
 
     if not data:
+
         print("❌ No hay datos")
         return
 
-    # 💰 Gestión de banca
+    # =========================
+    # 💰 GESTIÓN DE BANCA
+    # =========================
+
     bank = 1000
     risk = 0.02
+
     stake = bank * risk
 
     # =========================
@@ -81,11 +88,17 @@ def run_bot():
             odds_home = odds[0]["price"]
 
             # =========================
-            # 📊 MODELO SIMPLE
+            # ⚽ MODELO MEJORADO
             # =========================
 
-            home_goals = 1.6
-            away_goals = 1.2
+            attack_home = 1.4
+            defense_home = 1.0
+
+            attack_away = 1.1
+            defense_away = 1.3
+
+            home_goals = attack_home * defense_away
+            away_goals = attack_away * defense_home
 
             home_win = 0
 
@@ -99,38 +112,50 @@ def run_bot():
                         home_win += p
 
             # =========================
-            # 💰 VALUE
+            # 📊 EDGE + EV
             # =========================
 
             implied = 1 / odds_home
 
             edge = home_win - implied
 
+            ev = (home_win * odds_home) - 1
+
             print(
                 home_team,
                 "vs",
                 away_team,
                 "Edge:",
-                round(edge, 3)
+                round(edge, 3),
+                "EV:",
+                round(ev, 3)
             )
 
             # =========================
             # 🚨 VALUE BET
             # =========================
 
-            if edge > 0.05:
+            if edge > 0.08 and ev > 0.05 and odds_home >= 1.70:
 
-                send(f"""🔥 VALUE BET
+                send(f"""🔥 VALUE BET DETECTADA
 
+⚽ Partido:
 {home_team} vs {away_team}
 
-Cuota: {odds_home}
+💰 Cuota:
+{odds_home}
 
-Prob modelo: {round(home_win, 2)}
+📊 Probabilidad modelo:
+{round(home_win, 2)}
 
-Edge: {round(edge, 3)}
+📈 Edge:
+{round(edge, 3)}
 
-Stake recomendado: €{round(stake, 2)}
+💎 EV:
+{round(ev, 3)}
+
+💵 Stake recomendado:
+€{round(stake, 2)}
 """)
 
         except Exception as e:
