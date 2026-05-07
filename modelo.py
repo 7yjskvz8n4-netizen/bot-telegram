@@ -1,17 +1,3 @@
-import time
-import math
-import requests
-
-# =========================
-# 🔑 CONFIG
-# =========================
-
-TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
-CHAT_ID = "1335805552"
-
-ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
-FOOTBALL_API_KEY = "c4c1545b17ef9e743e0277f07870bb28"
-
 # =========================
 # 📩 TELEGRAM
 # =========================
@@ -20,7 +6,10 @@ def send(msg):
 
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    requests.post(
+        url,
+        data={"chat_id": CHAT_ID, "text": msg}
+    )
 
 # =========================
 # 📊 POISSON
@@ -46,63 +35,12 @@ def kelly(edge, odds):
     return max(0, (b * p - q) / b)
 
 # =========================
-# ⚽ DATOS REALES (FORMA)
-# =========================
-
-def get_real_form(team_id):
-
-    url = "https://v3.football.api-sports.io/fixtures"
-
-    headers = {
-        "x-apisports-key": FOOTBALL_API_KEY
-    }
-
-    params = {
-        "team": team_id,
-        "last": 5
-    }
-
-    r = requests.get(url, headers=headers, params=params)
-
-    data = r.json()
-
-    goals_for = 0
-    goals_against = 0
-    matches = 0
-
-    for match in data.get("response", []):
-
-        home = match["teams"]["home"]["id"]
-        away = match["teams"]["away"]["id"]
-
-        goals_home = match["goals"]["home"] or 0
-        goals_away = match["goals"]["away"] or 0
-
-        if home == team_id:
-            goals_for += goals_home
-            goals_against += goals_away
-
-        else:
-            goals_for += goals_away
-            goals_against += goals_home
-
-        matches += 1
-
-    if matches == 0:
-        return 1.2, 1.2
-
-    attack = goals_for / matches
-    defense = goals_against / matches
-
-    return attack, defense
-
-# =========================
-# 🤖 BOT
+# 🤖 BOT PRINCIPAL
 # =========================
 
 def run_bot():
 
-    print("🔄 Analizando mercado real...")
+    print("🔄 Analizando mercado...")
 
     url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
 
@@ -136,21 +74,13 @@ def run_bot():
             odds_home = odds[0]["price"]
 
             # =========================
-            # ⚽ FORMA REAL (HISTÓRICA)
+            # ⚽ MODELO DINÁMICO
             # =========================
 
-            home_id = match.get("home_team_id", 0)
-            away_id = match.get("away_team_id", 0)
+            market_prob = 1 / odds_home
 
-            home_attack, home_defense = get_real_form(home_id)
-            away_attack, away_defense = get_real_form(away_id)
-
-            # =========================
-            # 📊 GOLES ESPERADOS
-            # =========================
-
-            home_goals = home_attack * away_defense * 1.05
-            away_goals = away_attack * home_defense
+            home_goals = 1.0 + (market_prob * 1.2)
+            away_goals = 1.0 + ((1 - market_prob) * 1.2)
 
             home_goals = max(0.4, min(home_goals, 3.5))
             away_goals = max(0.4, min(away_goals, 3.5))
@@ -171,15 +101,21 @@ def run_bot():
 
             implied = 1 / odds_home
 
-            # =========================
-            # 📈 EDGE REAL
-            # =========================
-
             edge = (home_win - implied) * 1.15
 
             ev = (home_win * odds_home) - 1
 
-            kelly_fraction = kelly(edge, odds_home)
+            # =========================
+            # 🧠 SCORE
+            # =========================
+
+            score = (edge * 0.5) + (ev * 0.5)
+
+            # =========================
+            # 💰 KELLY CONSERVADOR
+            # =========================
+
+            kelly_fraction = kelly(edge, odds_home) * 0.3
 
             stake = bank * kelly_fraction
 
@@ -190,35 +126,34 @@ def run_bot():
                 "Edge:",
                 round(edge, 3),
                 "EV:",
-                round(ev, 3)
+                round(ev, 3),
+                "Score:",
+                round(score, 3)
             )
 
             # =========================
-            # 🚨 FILTRO PRO
+            # 🚨 FILTRO TRADING
             # =========================
 
             if (
-                edge > 0.05 and
-                ev > 0.03 and
-                kelly_fraction > 0 and
-                1.6 <= odds_home <= 3.5
+                edge > 0.06 and
+                ev > 0.04 and
+                score > 0.05 and
+                1.7 <= odds_home <= 3.2 and
+                kelly_fraction > 0
             ):
 
-                send(f"""🔥 VALUE BET REAL DATA
+                send(f"""📊 TRADE DETECTADO
 
 ⚽ {home_team} vs {away_team}
 
 💰 Cuota: {odds_home}
 
-📊 Prob modelo: {round(home_win, 3)}
+📈 Edge: {round(edge,3)}
+💎 EV: {round(ev,3)}
+🧠 Score: {round(score,3)}
 
-📈 Edge: {round(edge, 3)}
-
-💎 EV: {round(ev, 3)}
-
-🧠 Kelly: {round(kelly_fraction, 3)}
-
-💵 Stake: €{round(stake, 2)}
+💰 Stake: €{round(stake,2)}
 """)
 
         except Exception as e:
@@ -226,7 +161,7 @@ def run_bot():
             print("❌ Error partido:", e)
 
 # =========================
-# 🔄 LOOP
+# 🔄 LOOP 24/7
 # =========================
 
 while True:
