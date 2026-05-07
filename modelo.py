@@ -3,7 +3,7 @@ import math
 import requests
 
 # =========================
-# 🔑 CONFIGURACIÓN
+# 🔑 CONFIG
 # =========================
 
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
@@ -55,22 +55,12 @@ def run_bot():
     data = response.json()
 
     if not data:
-
-        print("❌ No hay datos")
+        print("❌ Sin datos")
         return
-
-    # =========================
-    # 💰 GESTIÓN DE BANCA
-    # =========================
 
     bank = 1000
     risk = 0.02
-
     stake = bank * risk
-
-    # =========================
-    # 🔁 RECORRER PARTIDOS
-    # =========================
 
     for match in data:
 
@@ -80,40 +70,29 @@ def run_bot():
             away_team = match["away_team"]
 
             bookmaker = match["bookmakers"][0]
-
             market = bookmaker["markets"][0]
-
             odds = market["outcomes"]
 
             odds_home = odds[0]["price"]
 
             # =========================
-            # ⚽ MODELO MEJORADO
+            # ⚽ MODELO DINÁMICO (MEJORADO)
             # =========================
 
-            attack_home = 1.4
-            defense_home = 1.0
+            favorite_strength = 1.7 / odds_home
 
-            attack_away = 1.1
-            defense_away = 1.3
-
-            home_goals = attack_home * defense_away
-            away_goals = attack_away * defense_home
+            home_goals = 1.2 + (favorite_strength * 0.8)
+            away_goals = 1.1 + ((1 - favorite_strength) * 0.8)
 
             home_win = 0
 
             for i in range(6):
-
                 for j in range(6):
 
                     p = poisson_prob(i, home_goals) * poisson_prob(j, away_goals)
 
                     if i > j:
                         home_win += p
-
-            # =========================
-            # 📊 EDGE + EV
-            # =========================
 
             implied = 1 / odds_home
 
@@ -132,7 +111,7 @@ def run_bot():
             )
 
             # =========================
-            # 🚨 VALUE BET
+            # 🚨 VALUE BET FILTER
             # =========================
 
             if edge > 0.08 and ev > 0.05 and odds_home >= 1.70:
@@ -145,7 +124,7 @@ def run_bot():
 💰 Cuota:
 {odds_home}
 
-📊 Probabilidad modelo:
+📊 Prob modelo:
 {round(home_win, 2)}
 
 📈 Edge:
@@ -154,7 +133,7 @@ def run_bot():
 💎 EV:
 {round(ev, 3)}
 
-💵 Stake recomendado:
+💵 Stake:
 €{round(stake, 2)}
 """)
 
