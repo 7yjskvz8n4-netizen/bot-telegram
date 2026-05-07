@@ -8,7 +8,9 @@ import requests
 
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
+
 ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
+FOOTBALL_API_KEY = "c4c1545b17ef9e743e0277f07870bb28"
 
 # =========================
 # 📩 TELEGRAM
@@ -18,10 +20,7 @@ def send(msg):
 
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-    requests.post(
-        url,
-        data={"chat_id": CHAT_ID, "text": msg}
-    )
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
 # =========================
 # 📊 POISSON
@@ -44,32 +43,58 @@ def kelly(edge, odds):
     p = edge + (1 / odds)
     q = 1 - p
 
-    f = (b * p - q) / b
-
-    return max(0, f)
+    return max(0, (b * p - q) / b)
 
 # =========================
-# ⚽ FORMA REALISTA (BASE HISTÓRICA SIMULADA)
+# ⚽ DATOS REALES (FORMA)
 # =========================
 
-def get_recent_form(team_name):
+def get_real_form(team_id):
 
-    # 🔥 simula forma consistente basada en nombre + estabilidad
-    # 👉 aquí luego puedes conectar API real de resultados
+    url = "https://v3.football.api-sports.io/fixtures"
 
-    seed = sum(ord(c) for c in team_name)
+    headers = {
+        "x-apisports-key": FOOTBALL_API_KEY
+    }
 
-    matches = 5
+    params = {
+        "team": team_id,
+        "last": 5
+    }
 
-    goals_for = (seed % 7) / 2 + 0.8
-    goals_against = (seed % 5) / 2 + 0.6
+    r = requests.get(url, headers=headers, params=params)
 
-    form_factor = ((seed % 10) - 5) / 10  # -0.5 a +0.5
+    data = r.json()
 
-    attack = goals_for + form_factor
-    defense = goals_against - form_factor
+    goals_for = 0
+    goals_against = 0
+    matches = 0
 
-    return max(0.4, attack), max(0.4, defense)
+    for match in data.get("response", []):
+
+        home = match["teams"]["home"]["id"]
+        away = match["teams"]["away"]["id"]
+
+        goals_home = match["goals"]["home"] or 0
+        goals_away = match["goals"]["away"] or 0
+
+        if home == team_id:
+            goals_for += goals_home
+            goals_against += goals_away
+
+        else:
+            goals_for += goals_away
+            goals_against += goals_home
+
+        matches += 1
+
+    if matches == 0:
+        return 1.2, 1.2
+
+    attack = goals_for / matches
+    defense = goals_against / matches
+
+    return attack, defense
 
 # =========================
 # 🤖 BOT
@@ -77,7 +102,7 @@ def get_recent_form(team_name):
 
 def run_bot():
 
-    print("🔄 Analizando mercados...")
+    print("🔄 Analizando mercado real...")
 
     url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
 
@@ -111,11 +136,14 @@ def run_bot():
             odds_home = odds[0]["price"]
 
             # =========================
-            # ⚽ FORMA REAL (MEJORADA)
+            # ⚽ FORMA REAL (HISTÓRICA)
             # =========================
 
-            home_attack, home_defense = get_recent_form(home_team)
-            away_attack, away_defense = get_recent_form(away_team)
+            home_id = match.get("home_team_id", 0)
+            away_id = match.get("away_team_id", 0)
+
+            home_attack, home_defense = get_real_form(home_id)
+            away_attack, away_defense = get_real_form(away_id)
 
             # =========================
             # 📊 GOLES ESPERADOS
@@ -124,8 +152,8 @@ def run_bot():
             home_goals = home_attack * away_defense * 1.05
             away_goals = away_attack * home_defense
 
-            home_goals = max(0.4, min(home_goals, 3.2))
-            away_goals = max(0.4, min(away_goals, 3.2))
+            home_goals = max(0.4, min(home_goals, 3.5))
+            away_goals = max(0.4, min(away_goals, 3.5))
 
             # =========================
             # 📊 POISSON
@@ -144,16 +172,12 @@ def run_bot():
             implied = 1 / odds_home
 
             # =========================
-            # 📈 EDGE MEJORADO
+            # 📈 EDGE REAL
             # =========================
 
-            edge = (home_win - implied) * 1.12
+            edge = (home_win - implied) * 1.15
 
             ev = (home_win * odds_home) - 1
-
-            # =========================
-            # 💰 KELLY
-            # =========================
 
             kelly_fraction = kelly(edge, odds_home)
 
@@ -166,13 +190,11 @@ def run_bot():
                 "Edge:",
                 round(edge, 3),
                 "EV:",
-                round(ev, 3),
-                "Kelly:",
-                round(kelly_fraction, 3)
+                round(ev, 3)
             )
 
             # =========================
-            # 🚨 FILTRO MÁS SERIO
+            # 🚨 FILTRO PRO
             # =========================
 
             if (
@@ -182,7 +204,7 @@ def run_bot():
                 1.6 <= odds_home <= 3.5
             ):
 
-                send(f"""🔥 VALUE BET PRO (FORMA REAL)
+                send(f"""🔥 VALUE BET REAL DATA
 
 ⚽ {home_team} vs {away_team}
 
@@ -204,7 +226,7 @@ def run_bot():
             print("❌ Error partido:", e)
 
 # =========================
-# 🔄 LOOP 24/7
+# 🔄 LOOP
 # =========================
 
 while True:
