@@ -6,7 +6,7 @@ import requests
 # 🔑 CONFIG
 # =========================
 
-TOKEN = "TU_TO8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7oKEN"
+TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
 
@@ -20,7 +20,10 @@ def send(msg):
 
     requests.post(
         url,
-        data={"chat_id": CHAT_ID, "text": msg}
+        data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        }
     )
 
 # =========================
@@ -32,7 +35,7 @@ def poisson_prob(k, lam):
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
 
 # =========================
-# 🧠 KELLY (STAKE INTELIGENTE)
+# 🧠 KELLY
 # =========================
 
 def kelly(edge, odds):
@@ -42,7 +45,6 @@ def kelly(edge, odds):
 
     b = odds - 1
     p = edge + (1 / odds)
-
     q = 1 - p
 
     f = (b * p - q) / b
@@ -55,7 +57,7 @@ def kelly(edge, odds):
 
 def run_bot():
 
-    print("🔄 Analizando mercado...")
+    print("🔄 Analizando mercados...")
 
     url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
 
@@ -89,13 +91,20 @@ def run_bot():
             odds_home = odds[0]["price"]
 
             # =========================
-            # ⚽ MODELO ESTABILIZADO
+            # ⚽ MODELO DINÁMICO MEJORADO
             # =========================
 
-            favorite_strength = 1.7 / odds_home
+            market_prob = 1 / odds_home
 
-            home_goals = 1.15 + (favorite_strength * 0.75)
-            away_goals = 1.10 + ((1 - favorite_strength) * 0.75)
+            home_goals = 1.0 + (market_prob * 1.2)
+            away_goals = 1.0 + ((1 - market_prob) * 1.2)
+
+            home_goals = max(0.6, min(home_goals, 2.8))
+            away_goals = max(0.6, min(away_goals, 2.8))
+
+            # =========================
+            # 📊 POISSON
+            # =========================
 
             home_win = 0
 
@@ -114,7 +123,7 @@ def run_bot():
             ev = (home_win * odds_home) - 1
 
             # =========================
-            # 💰 KELLY STAKE
+            # 💰 KELLY
             # =========================
 
             kelly_fraction = kelly(edge, odds_home)
@@ -134,7 +143,7 @@ def run_bot():
             )
 
             # =========================
-            # 🚨 FILTRO PRO
+            # 🚨 VALUE BET FILTER
             # =========================
 
             if (
@@ -175,7 +184,7 @@ while True:
 
         run_bot()
 
-        print("⏳ Esperando 30 min...")
+        print("⏳ Esperando 30 minutos...")
 
         time.sleep(1800)
 
