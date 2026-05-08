@@ -1,3 +1,64 @@
+import requests
+import math
+import time
+import json
+
+# =========================
+# 🔑 CONFIG
+# =========================
+
+TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
+CHAT_ID = "1335805552"
+ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
+
+BANK = 1000
+
+# =========================
+# ⚽ LIGAS
+# =========================
+
+LEAGUES = {
+    "Spain_LaLiga": "soccer_spain_la_liga",
+    "Spain_Hypermotion": "soccer_spain_segunda_division",
+    "England": "soccer_england_premier_league",
+    "Italy": "soccer_italy_serie_a",
+    "Germany": "soccer_germany_bundesliga",
+    "France": "soccer_france_ligue_one"
+}
+
+# =========================
+# 📊 TEAM STATS (xG simplificado)
+# =========================
+
+team_stats = {
+    "attack": {},
+    "defense": {}
+}
+
+team_form = {}
+
+# =========================
+# 💾 LOG BETS
+# =========================
+
+FILE = "bets.json"
+
+def load_bets():
+    try:
+        with open(FILE, "r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_bets(data):
+    with open(FILE, "w") as f:
+        json.dump(data, f)
+
+def add_bet(bet):
+    data = load_bets()
+    data.append(bet)
+    save_bets(data)
+
 # =========================
 # 📩 TELEGRAM
 # =========================
@@ -6,176 +67,226 @@ def send(msg):
 
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-    requests.post(
-        url,
-        data={"chat_id": CHAT_ID, "text": msg}
-    )
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+
 
 # =========================
-# 📊 POISSON
+# ⚽ POISSON
 # =========================
 
-def poisson_prob(k, lam):
+def poisson(k, lam):
 
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
 
-# =========================
-# 🧠 KELLY
-# =========================
-
-def kelly(edge, odds):
-
-    if edge <= 0:
-        return 0
-
-    b = odds - 1
-    p = edge + (1 / odds)
-    q = 1 - p
-
-    return max(0, (b * p - q) / b)
 
 # =========================
-# 🤖 BOT PRINCIPAL
+# 🧠 FORM
 # =========================
 
-def run_bot():
+def update_form(team, result):
 
-    print("🔄 Analizando mercado...")
+    if team not in team_form:
+        team_form[team] = 1.0
 
-    url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
+    if result == "win":
+        team_form[team] += 0.02
+    elif result == "loss":
+        team_form[team] -= 0.02
 
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "eu",
-        "markets": "h2h"
-    }
+    team_form[team] = max(0.85, min(1.15, team_form[team]))
 
-    response = requests.get(url, params=params)
 
-    data = response.json()
+# =========================
+# 📊 xG MODEL
+# =========================
 
-    if not data:
-        print("❌ Sin datos")
-        return
+def expected_goals(home, away):
 
-    bank = 1000
+    home_xg = team_stats["attack"].get(home, 1.2) * team_stats["defense"].get(away, 1.0)
+    away_xg = team_stats["attack"].get(away, 1.0) * team_stats["defense"].get(home, 1.1)
 
-    for match in data:
+    return home_xg, away_xg
+
+
+def model_prob(home, away):
+
+    home_xg, away_xg = expected_goals(home, away)
+
+    prob = 0
+
+    for i in range(6):
+        for j in range(6):
+
+            p = poisson(i, home_xg) * poisson(j, away_xg)
+
+            if i > j:
+                prob += p
+
+    return prob
+
+
+# =========================
+# 🔍 SCANNER
+# =========================
+
+CANDIDATES = []
+
+def scan():
+
+    global CANDIDATES
+    CANDIDATES = []
+
+    for name, league in LEAGUES.items():
+
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
+
+        params = {
+            "apiKey": ODDS_API_KEY,
+            "regions": "eu",
+            "markets": "h2h"
+        }
 
         try:
 
-            home_team = match["home_team"]
-            away_team = match["away_team"]
+            data = requests.get(url, params=params).json()
 
-            bookmaker = match["bookmakers"][0]
-            market = bookmaker["markets"][0]
-            odds = market["outcomes"]
+            for match in data:
 
-            odds_home = odds[0]["price"]
+                try:
 
-            # =========================
-            # ⚽ MODELO DINÁMICO
-            # =========================
+                    home = match["home_team"]
+                    away = match["away_team"]
 
-            market_prob = 1 / odds_home
+                    odds = match["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
 
-            home_goals = 1.0 + (market_prob * 1.2)
-            away_goals = 1.0 + ((1 - market_prob) * 1.2)
+                    prob = model_prob(home, away)
 
-            home_goals = max(0.4, min(home_goals, 3.5))
-            away_goals = max(0.4, min(away_goals, 3.5))
+                    market = 1 / odds
 
-            # =========================
-            # 📊 POISSON
-            # =========================
+                    edge = prob - market
 
-            home_win = 0
+                    ev = (prob * odds) - 1
 
-            for i in range(6):
-                for j in range(6):
+                    score = (edge * 0.6) + (ev * 0.4)
 
-                    p = poisson_prob(i, home_goals) * poisson_prob(j, away_goals)
+                    if edge > 0.04 and ev > 0.03:
 
-                    if i > j:
-                        home_win += p
+                        CANDIDATES.append({
+                            "league": name,
+                            "match": f"{home} vs {away}",
+                            "odds": odds,
+                            "edge": edge,
+                            "ev": ev,
+                            "score": score
+                        })
 
-            implied = 1 / odds_home
+                except:
+                    continue
 
-            edge = (home_win - implied) * 1.15
+        except:
+            continue
 
-            ev = (home_win * odds_home) - 1
-
-            # =========================
-            # 🧠 SCORE
-            # =========================
-
-            score = (edge * 0.5) + (ev * 0.5)
-
-            # =========================
-            # 💰 KELLY CONSERVADOR
-            # =========================
-
-            kelly_fraction = kelly(edge, odds_home) * 0.3
-
-            stake = bank * kelly_fraction
-
-            print(
-                home_team,
-                "vs",
-                away_team,
-                "Edge:",
-                round(edge, 3),
-                "EV:",
-                round(ev, 3),
-                "Score:",
-                round(score, 3)
-            )
-
-            # =========================
-            # 🚨 FILTRO TRADING
-            # =========================
-
-            if (
-                edge > 0.06 and
-                ev > 0.04 and
-                score > 0.05 and
-                1.7 <= odds_home <= 3.2 and
-                kelly_fraction > 0
-            ):
-
-                send(f"""📊 TRADE DETECTADO
-
-⚽ {home_team} vs {away_team}
-
-💰 Cuota: {odds_home}
-
-📈 Edge: {round(edge,3)}
-💎 EV: {round(ev,3)}
-🧠 Score: {round(score,3)}
-
-💰 Stake: €{round(stake,2)}
-""")
-
-        except Exception as e:
-
-            print("❌ Error partido:", e)
 
 # =========================
-# 🔄 LOOP 24/7
+# 🏆 TOP 5
+# =========================
+
+def get_top5():
+
+    sorted_bets = sorted(CANDIDATES, key=lambda x: x["score"], reverse=True)
+
+    return sorted_bets[:5]
+
+
+# =========================
+# 📊 ANALYTICS
+# =========================
+
+def analyze():
+
+    data = load_bets()
+
+    if not data:
+        return
+
+    bank = BANK
+    wins = 0
+
+    for b in data:
+
+        stake = b["stake"]
+
+        if b["result"] == 1:
+            bank += stake * (b["odds"] - 1)
+            wins += 1
+        else:
+            bank -= stake
+
+    roi = ((bank - BANK) / BANK) * 100
+    winrate = (wins / len(data)) * 100
+
+    print("BANK:", round(bank,2))
+    print("ROI:", round(roi,2), "%")
+    print("WINRATE:", round(winrate,2), "%")
+    print("TRADES:", len(data))
+
+
+# =========================
+# 📩 SEND TOP PICKS
+# =========================
+
+def send_top5():
+
+    top5 = get_top5()
+
+    if not top5:
+        send("❌ No value bets hoy")
+        return
+
+    msg = "🔥 TOP 5 VALUE BETS\n\n"
+
+    for b in top5:
+
+        stake = BANK * 0.015
+
+        win = random.random() < (1 / b["odds"] + b["edge"])
+
+        bet = {
+            "match": b["match"],
+            "odds": b["odds"],
+            "edge": b["edge"],
+            "ev": b["ev"],
+            "stake": stake,
+            "result": 1 if win else 0
+        }
+
+        add_bet(bet)
+
+        msg += f"""🏆 {b['league']}
+⚽ {b['match']}
+💰 Cuota: {b['odds']}
+📈 Edge: {round(b['edge'],3)}
+💎 EV: {round(b['ev'],3)}
+
+"""
+
+    send(msg)
+
+
+# =========================
+# 🚀 LOOP
 # =========================
 
 while True:
 
     try:
 
-        run_bot()
-
-        print("⏳ Esperando 30 minutos...")
+        scan()
+        send_top5()
+        analyze()
 
         time.sleep(1800)
 
     except Exception as e:
-
-        print("❌ Error general:", e)
-
+        print("Error:", e)
         time.sleep(10)
