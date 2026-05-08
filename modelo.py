@@ -59,4 +59,4 @@ def model_prob():
 
 def scan():
 
-    url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/od
+url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
