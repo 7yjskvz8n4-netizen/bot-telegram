@@ -12,8 +12,8 @@ API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
 
-# LIGAS PERMITIDAS (puedes añadir Hypermotion aquí)
-ALLOWED_LEAGUES = [140, 135, 78]  # LaLiga, Serie A, Premier League (ejemplo)
+# LIGAS RENTABLES (añade Hypermotion aquí si quieres)
+ALLOWED_LEAGUES = [140, 78, 135]
 
 
 # =========================
@@ -32,7 +32,7 @@ def send(msg):
 
 
 # =========================
-# ⚽ POISSON
+# ⚽ POISSON AVANZADO
 # =========================
 
 def poisson(k, lam):
@@ -61,13 +61,40 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
-# 📊 FORM (SIMPLIFICADO BASE)
+# 📊 FORMA REAL (BÁSICA PERO REAL)
 # =========================
 
-def team_form_factor():
+def get_team_strength(team_id):
 
-    # placeholder realista (luego se conecta a stats reales)
-    return 1.0
+    url = "https://v3.football.api-sports.io/fixtures"
+
+    headers = {"x-apisports-key": API_KEY}
+
+    params = {
+        "team": team_id,
+        "last": 5
+    }
+
+    try:
+
+        r = requests.get(url, headers=headers, params=params)
+
+        data = r.json()["response"]
+
+        goals_scored = 0
+        goals_conceded = 0
+
+        for m in data:
+
+            goals_scored += m["goals"]["home"] or 0
+            goals_scored += m["goals"]["away"] or 0
+
+        # simplificado
+        return 1.0 + (goals_scored / 10)
+
+    except:
+
+        return 1.0
 
 
 # =========================
@@ -76,8 +103,8 @@ def team_form_factor():
 
 def scan():
 
-    print("🔍 escaneando PRO system")
-    send("🔍 escaneando value bets PRO")
+    print("🔍 escaneo avanzado")
+    send("🔍 escaneo AVANZADO iniciado")
 
     url = "https://v3.football.api-sports.io/fixtures"
 
@@ -103,93 +130,51 @@ def scan():
 
         league_id = match["league"]["id"]
 
-        # =========================
-        # FILTRO DE LIGAS
-        # =========================
-
         if league_id not in ALLOWED_LEAGUES:
             continue
 
-        home = match["teams"]["home"]["name"]
-        away = match["teams"]["away"]["name"]
-
-        goals_home = match["goals"]["home"]
-        goals_away = match["goals"]["away"]
-
-        # solo partidos no jugados
-        if goals_home is not None:
+        if match["goals"]["home"] is not None:
             continue
 
+        home = match["teams"]["home"]
+        away = match["teams"]["away"]
+
+        home_name = home["name"]
+        away_name = away["name"]
+
+        home_strength = get_team_strength(home["id"])
+        away_strength = get_team_strength(away["id"])
+
         # =========================
-        # POISSON BASE
+        # POISSON AJUSTADO
         # =========================
 
-        home_xg = 1.55 * team_form_factor()
-        away_xg = 1.20 * team_form_factor()
+        base_home_xg = 1.5
+        base_away_xg = 1.2
+
+        home_xg = base_home_xg * home_strength
+        away_xg = base_away_xg * away_strength
 
         home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
 
-        # =========================
-        # CUOTAS SIMPLIFICADAS (API base)
-        # =========================
-
-        home_odds = 2.10
-        away_odds = 3.30
+        # cuotas simuladas base (luego se mejora con odds reales)
+        home_odds = 2.05
+        away_odds = 3.40
 
         home_edge = home_prob - (1 / home_odds)
         away_edge = away_prob - (1 / away_odds)
 
-        bets.append(("HOME", home, away, home_edge, home_odds))
-        bets.append(("AWAY", home, away, away_edge, away_odds))
+        bets.append(("HOME", home_name, away_name, home_edge, home_odds))
+        bets.append(("AWAY", home_name, away_name, away_edge, away_odds))
 
     # =========================
-    # 🏆 TOP 5
+    # 🏆 TOP 5 CALIDAD
     # =========================
 
     bets.sort(key=lambda x: x[3], reverse=True)
 
     top5 = bets[:5]
 
-    msg = "🔥 TOP 5 VALUE BETS PRO\n\n"
+    msg = "🔥 TOP 5 VALUE BETS AVANZADO\n\n"
 
     found = False
-
-    for b in top5:
-
-        side, home, away, edge, odds = b
-
-        if edge > 0.01:
-
-            found = True
-
-            msg += f"""⚽ {home} vs {away}
-➡️ {side}
-💰 Cuota: {odds}
-📈 Edge: {round(edge,3)}
-💵 Stake sugerido: {round(edge * BANK,2)}
-
-"""
-
-    if found:
-        send(msg)
-    else:
-        send("⚠️ Sin value bets PRO en este ciclo")
-
-    print("SCAN PRO terminado")
-
-
-# =========================
-# 🚀 LOOP
-# =========================
-
-print("🔥 BOT PRO INICIADO")
-
-while True:
-
-    try:
-        scan()
-        time.sleep(1800)
-
-    except Exception as e:
-        print("ERROR LOOP:", e)
-        time.sleep(10)
