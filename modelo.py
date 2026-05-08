@@ -8,7 +8,8 @@ import math
 
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
-ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88
+ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
+
 # =========================
 # 📩 TELEGRAM
 # =========================
