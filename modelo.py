@@ -66,7 +66,7 @@ def team_form(team_id):
 
     try:
 
-        url = "https://v3.api-football.com/fixtures"
+        url = "https://v3.football.api-sports.io/fixtures"
         headers = {"x-apisports-key": API_KEY}
 
         params = {"team": team_id, "last": 5}
@@ -93,7 +93,7 @@ def team_form(team_id):
 
 def get_odds(fixture_id):
 
-    url = "https://v3.api-football.com/odds"
+    url = "https://v3.football.api-sports.io/odds"
     headers = {"x-apisports-key": API_KEY}
 
     params = {"fixture": fixture_id}
