@@ -11,7 +11,6 @@ CHAT_ID = "1335805552"
 
 # 👇 PEGA TU API KEY REAL
 ODDS_API_KEY = "90ae2f6d7b5ddcd76926f1cf40be2ad7"
-"
 
 # =========================
 # 📩 TELEGRAM
