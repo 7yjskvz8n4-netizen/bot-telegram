@@ -1,15 +1,11 @@
 import requests
 
-ODDS_API_KEY = "TU_API_KEY"
+API_KEY = "90ae2f6d7b5ddcd76926f1cf40be2ad7"
 
-url = "https://api.the-odds-api.com/v4/sports"
-
-params = {
-    "167721723854a65832f09abdeb92952b": ODDS_API_KEY
-}
-
-response = requests.get(url, params=params)
+response = requests.get(
+    "https://api.the-odds-api.com/v4/sports",
+    params={"apiKey": API_KEY}
+)
 
 print("STATUS:", response.status_code)
-
 print(response.text)
