@@ -1,3 +1,4 @@
+print("🔥 BOT INICIADO")
 import requests
 import math
 import time
