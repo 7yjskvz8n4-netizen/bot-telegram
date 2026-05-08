@@ -59,4 +59,42 @@ def model_prob():
 
 def scan():
 
-url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
+    url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
+
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",
+        "markets": "h2h"
+    }
+
+    try:
+        data = requests.get(url, params=params).json()
+
+        for match in data:
+
+            home = match["home_team"]
+            away = match["away_team"]
+
+            try:
+                odds = match["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
+            except:
+                continue
+
+            prob = model_prob()
+            market_prob = 1 / odds
+
+            edge = prob - market_prob
+
+            if edge > 0.05:
+
+                send(f"""🔥 VALUE BET
+
+{home} vs {away}
+
+Cuota: {odds}
+Prob modelo: {round(prob,2)}
+Edge: {round(edge,3)}
+""")
+
+    except Exception as e:
+        print("Error API:", e)
