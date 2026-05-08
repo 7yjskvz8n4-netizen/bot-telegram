@@ -10,7 +10,7 @@ TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 
 # 👇 PEGA TU API KEY REAL
-ODDS_API_KEY = "90ae2f6d7b5ddcd76926f1cf40be2ad7
+ODDS_API_KEY = "90ae2f6d7b5ddcd76926f1cf40be2ad7"
 "
 
 # =========================
