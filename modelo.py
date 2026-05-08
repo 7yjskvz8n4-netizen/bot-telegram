@@ -12,8 +12,8 @@ API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
 
-# ligas de baja varianza (más “trading-friendly”)
-ALLOWED_LEAGUES = [140, 78, 135]
+# Pool amplio de ligas (exploración)
+LEAGUE_POOL = [140, 78, 135, 39, 61, 2, 3]
 
 
 # =========================
@@ -21,17 +21,18 @@ ALLOWED_LEAGUES = [140, 78, 135]
 # =========================
 
 def send(msg):
+
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg}
         )
     except:
-        pass
+        print("Telegram error")
 
 
 # =========================
-# ⚽ PROBABILIDAD BASE
+# ⚽ POISSON
 # =========================
 
 def poisson(k, lam):
@@ -40,7 +41,7 @@ def poisson(k, lam):
 
 def match_probs(home_xg, away_xg):
 
-    hw = d = aw = 0
+    home_win = draw = away_win = 0
 
     for i in range(6):
         for j in range(6):
@@ -48,74 +49,95 @@ def match_probs(home_xg, away_xg):
             p = poisson(i, home_xg) * poisson(j, away_xg)
 
             if i > j:
-                hw += p
+                home_win += p
             elif i == j:
-                d += p
+                draw += p
             else:
-                aw += p
+                away_win += p
 
-    return hw, d, aw
+    return home_win, draw, away_win
 
 
 # =========================
-# 📊 TEAM STRENGTH (ATAQUE/DEFENSA SEPARADO)
+# 📊 SCORE DE LIGA
 # =========================
 
-def team_strength(team_id):
+def league_score(league_id):
+
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {"x-apisports-key": API_KEY}
+
+    params = {
+        "league": league_id,
+        "season": 2025,
+        "last": 20
+    }
 
     try:
-
-        url = "https://v3.football.api-sports.io/fixtures"
-        headers = {"x-apisports-key": API_KEY}
-
-        params = {"team": team_id, "last": 6}
 
         r = requests.get(url, headers=headers, params=params)
         data = r.json()["response"]
 
-        gf = ga = 0
+        goals = []
 
         for m in data:
 
-            gf += (m["goals"]["home"] or 0)
-            gf += (m["goals"]["away"] or 0)
+            if m["goals"]["home"] is not None:
 
-        return gf / 15  # normalización simple
+                total = (m["goals"]["home"] or 0) + (m["goals"]["away"] or 0)
+                goals.append(total)
+
+        if len(goals) < 5:
+            return 0
+
+        avg = sum(goals) / len(goals)
+
+        var = sum((g - avg) ** 2 for g in goals) / len(goals)
+
+        # score tipo trading
+        return avg * 0.6 + var * 0.4
 
     except:
-        return 1
 
-
-# =========================
-# 💰 KELLY CONSERVADOR
-# =========================
-
-def kelly(edge, odds):
-
-    if edge <= 0:
         return 0
 
-    b = odds - 1
-    p = edge + (1 / odds)
-    q = 1 - p
 
-    k = (b * p - q) / b
+# =========================
+# 🏆 AUTO LIGAS RENTABLES
+# =========================
 
-    # hedge fund style → reducción fuerte de riesgo
-    return max(0, k * 0.5)
+def get_best_leagues():
+
+    scored = []
+
+    for league in LEAGUE_POOL:
+
+        score = league_score(league)
+
+        if score > 0:
+            scored.append((league, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    best = [l[0] for l in scored[:3]]
+
+    print("📊 Ligas seleccionadas:", best)
+
+    return best
 
 
 # =========================
-# 🔍 SCAN HEDGE FUND
+# 🔍 SCAN
 # =========================
 
 def scan():
 
-    print("🔍 HEDGE FUND SCAN")
-    send("🔍 hedge fund scan activo")
+    print("🔍 SCAN INICIADO")
+    send("🔍 bot activo - scan iniciado")
+
+    best_leagues = get_best_leagues()
 
     url = "https://v3.football.api-sports.io/fixtures"
-
     headers = {"x-apisports-key": API_KEY}
     params = {"season": 2025}
 
@@ -127,96 +149,82 @@ def scan():
 
     data = r.json()["response"]
 
-    picks = []
+    bets = []
 
     for match in data:
 
         league = match["league"]["id"]
 
-        if league not in ALLOWED_LEAGUES:
+        if league not in best_leagues:
             continue
 
         if match["goals"]["home"] is not None:
             continue
 
-        home = match["teams"]["home"]
-        away = match["teams"]["away"]
+        home = match["teams"]["home"]["name"]
+        away = match["teams"]["away"]["name"]
 
         # =========================
-        # STRENGTH MODEL
+        # MODELO SIMPLE ESTABLE
         # =========================
 
-        h = team_strength(home["id"])
-        a = team_strength(away["id"])
+        home_xg = 1.5
+        away_xg = 1.2
 
-        home_xg = 1.5 * (1 + h)
-        away_xg = 1.2 * (1 + a)
+        home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
 
-        home_p, draw_p, away_p = match_probs(home_xg, away_xg)
+        home_odds = 2.10
+        away_odds = 3.30
 
-        # =========================
-        # ODDS (simplificado base)
-        # =========================
+        home_edge = home_prob - (1 / home_odds)
+        away_edge = away_prob - (1 / away_odds)
 
-        home_odds = 2.05
-        away_odds = 3.25
+        if home_edge > 0.02:
+            bets.append(("HOME", home, away, home_edge, home_odds))
 
-        # =========================
-        # EDGE REAL
-        # =========================
-
-        home_edge = home_p - (1 / home_odds)
-        away_edge = away_p - (1 / away_odds)
-
-        # =========================
-        # FILTER HEDGE FUND
-        # =========================
-
-        if home_edge > 0.025:
-            picks.append(("HOME", home["name"], away["name"], home_edge, home_odds))
-
-        if away_edge > 0.025:
-            picks.append(("AWAY", home["name"], away["name"], away_edge, away_odds))
+        if away_edge > 0.02:
+            bets.append(("AWAY", home, away, away_edge, away_odds))
 
     # =========================
-    # 🏆 TOP PICKS FINAL
+    # 🏆 TOP PICKS
     # =========================
 
-    picks.sort(key=lambda x: x[3], reverse=True)
+    bets.sort(key=lambda x: x[3], reverse=True)
 
-    top = picks[:5]
+    top5 = bets[:5]
 
-    if not top:
-        send("⚠️ Sin edge suficiente (hedge fund filter)")
-        print("NO PICKS")
+    if not top5:
+
+        send("⚠️ Sin value bets este ciclo")
+        print("SIN BETS")
         return
 
-    msg = "🔥 HEDGE FUND TOP PICKS\n\n"
+    msg = "🔥 TOP 5 VALUE BETS (AUTO LIGAS)\n\n"
 
-    for p in top:
+    for b in top5:
 
-        side, home, away, edge, odds = p
+        side, home, away, edge, odds = b
 
-        stake = kelly(edge, odds) * BANK
+        stake = max(0, edge * BANK)
 
         msg += f"""⚽ {home} vs {away}
 ➡️ {side}
 💰 Cuota: {odds}
-📈 Edge: {round(edge,4)}
+📈 Edge: {round(edge,3)}
 💵 Stake: €{round(stake,2)}
 
 """
 
     send(msg)
-    print("HEDGE FUND OK")
+    print("SCAN OK")
 
 
 # =========================
 # 🚀 LOOP
 # =========================
 
-print("🔥 HEDGE FUND BOT INICIADO")
-send("🔥 HEDGE FUND ONLINE")
+print("🔥 BOT AUTO-LIGAS INICIADO")
+send("🔥 BOT AUTO-LIGAS ONLINE")
 
 while True:
 
