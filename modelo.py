@@ -14,6 +14,8 @@ BANK = 1000
 
 LEAGUE_POOL = [140, 78, 135, 39, 61]
 
+MIN_ODDS = 1.65
+
 
 # =========================
 # 📩 TELEGRAM
@@ -57,19 +59,20 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
-# 📊 FORM SIMPLE (STABLE)
+# 📊 FORM SIMPLE
 # =========================
 
 def team_form(team_id):
 
     try:
 
-        url = "https://v3.football.api-sports.io/fixtures"
+        url = "https://v3.api-football.com/fixtures"
         headers = {"x-apisports-key": API_KEY}
 
         params = {"team": team_id, "last": 5}
 
         r = requests.get(url, headers=headers, params=params)
+
         data = r.json().get("response", [])
 
         goals = 0
@@ -85,12 +88,12 @@ def team_form(team_id):
 
 
 # =========================
-# 💰 ODDS MULTI
+# 💰 ODDS REALES
 # =========================
 
 def get_odds(fixture_id):
 
-    url = "https://v3.football.api-sports.io/odds"
+    url = "https://v3.api-football.com/odds"
     headers = {"x-apisports-key": API_KEY}
 
     params = {"fixture": fixture_id}
@@ -111,9 +114,10 @@ def get_odds(fixture_id):
                     if bet["name"] != "Match Winner":
                         continue
 
-                    for v in bet["values"]:
+                    for v in bet.get("values", []):
 
                         try:
+
                             odd = float(v["odd"])
 
                             if v["value"] == "Home":
@@ -130,7 +134,6 @@ def get_odds(fixture_id):
         return best["Home"], best["Away"]
 
     except:
-
         return None, None
 
 
@@ -152,13 +155,11 @@ def edge(prob, odds):
 
 def scan():
 
-    print("🔍 SCAN CALIBRADO")
-    send("🔍 bot calibrado activo")
+    print("🔍 SCAN ACTIVO (1.65 FILTER)")
+    send("🔍 bot activo 1.65")
 
-    url = "https://v3.football.api-sports.io/fixtures"
-
+    url = "https://v3.api-football.com/fixtures"
     headers = {"x-apisports-key": API_KEY}
-
     params = {"season": 2025}
 
     r = requests.get(url, headers=headers, params=params)
@@ -169,7 +170,7 @@ def scan():
 
     data = r.json().get("response", [])
 
-    bets = []
+    candidates = []
 
     for m in data:
 
@@ -183,8 +184,8 @@ def scan():
 
         try:
 
-            home_team = m["teams"]["home"]["name"]
-            away_team = m["teams"]["away"]["name"]
+            home = m["teams"]["home"]["name"]
+            away = m["teams"]["away"]["name"]
 
             # =========================
             # MODELO CALIBRADO
@@ -198,12 +199,11 @@ def scan():
 
             home_p, draw_p, away_p = match_probs(home_xg, away_xg)
 
-            # suavizado tipo mercado
             home_p = (home_p * 0.9) + 0.05
             away_p = (away_p * 0.9) + 0.05
 
             # =========================
-            # CUOTAS REALES
+            # CUOTAS
             # =========================
 
             home_odds, away_odds = get_odds(m["fixture"]["id"])
@@ -212,40 +212,39 @@ def scan():
                 continue
 
             # =========================
-            # EDGE
+            # FILTRO 1.65
             # =========================
 
-            home_edge = edge(home_p, home_odds)
-            away_edge = edge(away_p, away_odds)
+            if home_odds >= MIN_ODDS:
+                home_edge = edge(home_p, home_odds)
+                if home_edge > 0:
+                    candidates.append(("HOME", home, away, home_edge, home_odds))
 
-            # filtro calibrado (no demasiado duro)
-            if home_edge > 0.008 and home_p > 0.25:
-                bets.append(("HOME", home_team, away_team, home_edge, home_odds))
-
-            if away_edge > 0.008 and away_p > 0.25:
-                bets.append(("AWAY", home_team, away_team, away_edge, away_odds))
+            if away_odds >= MIN_ODDS:
+                away_edge = edge(away_p, away_odds)
+                if away_edge > 0:
+                    candidates.append(("AWAY", home, away, away_edge, away_odds))
 
         except Exception as e:
             print("MATCH ERROR:", e)
             continue
 
     # =========================
-    # 🏆 TOP PICKS
+    # 🏆 RESULTADOS
     # =========================
 
-    bets.sort(key=lambda x: x[3], reverse=True)
+    candidates.sort(key=lambda x: x[3], reverse=True)
 
-    top5 = bets[:5]
+    top = candidates[:5]
 
-    if not top5:
-
-        send("⚠️ Sin picks en este ciclo")
+    if not top:
+        send("⚠️ Sin picks con filtro 1.65")
         print("SIN BETS")
         return
 
-    msg = "🔥 TOP VALUE BETS CALIBRADOS\n\n"
+    msg = "🔥 TOP VALUE BETS (>=1.65)\n\n"
 
-    for b in top5:
+    for b in top:
 
         side, home, away, edge_val, odds = b
 
@@ -267,8 +266,8 @@ def scan():
 # 🚀 LOOP
 # =========================
 
-print("🔥 BOT CALIBRADO INICIADO")
-send("🔥 BOT CALIBRADO ONLINE")
+print("🔥 BOT FINAL 1.65 INICIADO")
+send("🔥 BOT FINAL 1.65 ONLINE")
 
 while True:
 
@@ -278,4 +277,4 @@ while True:
 
     except Exception as e:
         print("ERROR:", e)
-        time.sleep(10)
+        time.sleep(60)
