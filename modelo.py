@@ -2,63 +2,48 @@ import requests
 import time
 import math
 
+# =========================
+# 🔑 CONFIG
+# =========================
+
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
-ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88"
-
-BANK = 1000
-
+ODDS_API_KEY = "8c45ed3a66d6870a222bce3c47a34a88
 # =========================
-# TELEGRAM
+# 📩 TELEGRAM
 # =========================
 
 def send(msg):
 
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": msg
-    })
+    try:
+        requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        })
+    except:
+        print("Error enviando Telegram")
 
 
 # =========================
-# POISSON SIMPLE
+# 📊 PROBABILIDAD SIMPLE
 # =========================
 
-def poisson(k, lam):
+def simple_prob_home():
 
-    return (lam ** k * math.exp(-lam)) / math.factorial(k)
-
-
-# =========================
-# PROBABILIDAD SIMPLE
-# =========================
-
-def model_prob():
-
-    home_goals = 1.4
-    away_goals = 1.1
-
-    prob = 0
-
-    for i in range(6):
-        for j in range(6):
-
-            p = poisson(i, home_goals) * poisson(j, away_goals)
-
-            if i > j:
-                prob += p
-
-    return prob
+    return 0.45  # base inicial estable
 
 
 # =========================
-# SCANNER
+# 🔍 SCAN DE PARTIDOS
 # =========================
 
 def scan():
 
+    print("🔍 scan iniciado")
+    send("🔍 bot escaneando partidos")
+
     url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
 
     params = {
@@ -69,24 +54,34 @@ def scan():
 
     try:
 
-        data = requests.get(url, params=params).json()
+        response = requests.get(url, params=params)
+
+        print("status API:", response.status_code)
+
+        data = response.json()
+
+        if not data:
+            send("⚠️ No hay datos disponibles")
+            return
 
         for match in data:
 
-            home = match["home_team"]
-            away = match["away_team"]
-
             try:
+
+                home = match["home_team"]
+                away = match["away_team"]
+
                 odds = match["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
+
             except:
                 continue
 
-            # 🔥 PROBABILIDAD SIMPLE (MEJORABLE DESPUÉS)
-            prob_home = 0.45
-
+            prob_model = simple_prob_home()
             market_prob = 1 / odds
 
-            edge = prob_home - market_prob
+            edge = prob_model - market_prob
+
+            print(home, away, "edge:", edge)
 
             if edge > 0.05:
 
@@ -95,48 +90,29 @@ def scan():
 {home} vs {away}
 
 Cuota: {odds}
-Prob modelo: {round(prob_home,2)}
+Prob modelo: {round(prob_model,2)}
 Edge: {round(edge,3)}
 """)
 
     except Exception as e:
-        print("Error:", e)
-    url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
+        print("ERROR API:", e)
+        send(f"❌ error API: {e}")
 
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "eu",
-        "markets": "h2h"
-    }
+
+# =========================
+# 🚀 LOOP PRINCIPAL
+# =========================
+
+print("🔥 BOT INICIADO")
+
+while True:
 
     try:
-        data = requests.get(url, params=params).json()
 
-        for match in data:
-
-            home = match["home_team"]
-            away = match["away_team"]
-
-            try:
-                odds = match["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
-            except:
-                continue
-
-            prob = model_prob()
-            market_prob = 1 / odds
-
-            edge = prob - market_prob
-
-            if edge > 0.05:
-
-                send(f"""🔥 VALUE BET
-
-{home} vs {away}
-
-Cuota: {odds}
-Prob modelo: {round(prob,2)}
-Edge: {round(edge,3)}
-""")
+        scan()
+        time.sleep(1800)
 
     except Exception as e:
-        print("Error API:", e)
+
+        print("ERROR GENERAL:", e)
+        time.sleep(10)
