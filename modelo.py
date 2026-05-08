@@ -11,8 +11,8 @@ CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
+RISK = 0.5  # reducción de Kelly (más seguro)
 
-# LIGAS RENTABLES (puedes ajustar)
 ALLOWED_LEAGUES = [140, 78, 135]  # LaLiga, Premier, Serie A
 
 
@@ -21,13 +21,14 @@ ALLOWED_LEAGUES = [140, 78, 135]  # LaLiga, Premier, Serie A
 # =========================
 
 def send(msg):
+
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg}
         )
-    except Exception as e:
-        print("Telegram error:", e)
+    except:
+        print("Telegram error")
 
 
 # =========================
@@ -40,9 +41,7 @@ def poisson(k, lam):
 
 def match_probs(home_xg, away_xg):
 
-    home_win = 0
-    draw = 0
-    away_win = 0
+    home_win = draw = away_win = 0
 
     for i in range(6):
         for j in range(6):
@@ -60,15 +59,14 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
-# 📊 FORMA SIMPLE (REAL API BASE)
+# 📊 FORM + STRENGTH
 # =========================
 
-def team_form(team_id):
+def team_strength(team_id):
 
     try:
 
         url = "https://v3.football.api-sports.io/fixtures"
-
         headers = {"x-apisports-key": API_KEY}
 
         params = {
@@ -86,14 +84,14 @@ def team_form(team_id):
             goals += (m["goals"]["home"] or 0)
             goals += (m["goals"]["away"] or 0)
 
-        return 1 + (goals / 12)
+        return 1 + (goals / 15)
 
     except:
         return 1
 
 
 # =========================
-# 💰 KELLY SIMPLIFICADO
+# 💰 KELLY
 # =========================
 
 def kelly(edge, odds):
@@ -114,8 +112,8 @@ def kelly(edge, odds):
 
 def scan():
 
-    print("🔍 scan PRO iniciado")
-    send("🔍 escaneo PRO activo")
+    print("🔍 SCAN PRO FINAL")
+    send("🔍 escaneo PRO FINAL activo")
 
     url = "https://v3.football.api-sports.io/fixtures"
 
@@ -135,9 +133,9 @@ def scan():
 
     for match in data:
 
-        league_id = match["league"]["id"]
+        league = match["league"]["id"]
 
-        if league_id not in ALLOWED_LEAGUES:
+        if league not in ALLOWED_LEAGUES:
             continue
 
         if match["goals"]["home"] is not None:
@@ -150,54 +148,59 @@ def scan():
         away_name = away["name"]
 
         # =========================
-        # FORMA REAL
+        # STRENGTH
         # =========================
 
-        home_form = team_form(home["id"])
-        away_form = team_form(away["id"])
+        h_strength = team_strength(home["id"])
+        a_strength = team_strength(away["id"])
 
         # =========================
-        # POISSON AJUSTADO
+        # XG MODEL
         # =========================
 
-        base_home_xg = 1.5 * home_form
-        base_away_xg = 1.2 * away_form
+        home_xg = 1.55 * h_strength
+        away_xg = 1.20 * a_strength
 
-        home_prob, draw_prob, away_prob = match_probs(base_home_xg, base_away_xg)
+        home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
 
-        # cuotas simuladas (puedes sustituir luego por odds reales)
-        home_odds = 2.10
-        away_odds = 3.40
+        # =========================
+        # ODDS SIMULADAS (fase final)
+        # =========================
+
+        home_odds = 2.05
+        away_odds = 3.30
 
         home_edge = home_prob - (1 / home_odds)
         away_edge = away_prob - (1 / away_odds)
 
-        bets.append(("HOME", home_name, away_name, home_edge, home_odds))
-        bets.append(("AWAY", home_name, away_name, away_edge, away_odds))
+        # filtro anti ruido
+        if home_edge > 0.015:
+            bets.append(("HOME", home_name, away_name, home_edge, home_odds))
+
+        if away_edge > 0.015:
+            bets.append(("AWAY", home_name, away_name, away_edge, away_odds))
 
     # =========================
-    # 🏆 TOP PICKS
+    # 🏆 TOP 5 FINAL
     # =========================
 
     bets.sort(key=lambda x: x[3], reverse=True)
 
     top5 = bets[:5]
 
-    msg = "🔥 TOP 5 VALUE BETS PRO\n\n"
+    msg = "🔥 TOP 5 VALUE BETS PRO FINAL\n\n"
 
-    found = False
+    if not top5:
+        send("⚠️ Sin value bets en este ciclo")
+        return
 
     for b in top5:
 
         side, home, away, edge, odds = b
 
-        if edge > 0.01:
+        stake = kelly(edge, odds) * BANK * RISK
 
-            stake = kelly(edge, odds) * BANK
-
-            found = True
-
-            msg += f"""⚽ {home} vs {away}
+        msg += f"""⚽ {home} vs {away}
 ➡️ {side}
 💰 Cuota: {odds}
 📈 Edge: {round(edge,3)}
@@ -205,20 +208,16 @@ def scan():
 
 """
 
-    if found:
-        send(msg)
-    else:
-        send("⚠️ Sin value bets PRO este ciclo")
-
-    print("SCAN PRO terminado")
+    send(msg)
+    print("SCAN FINAL OK")
 
 
 # =========================
 # 🚀 LOOP
 # =========================
 
-print("🔥 BOT PRO AVANZADO INICIADO")
-send("🔥 BOT PRO ONLINE")
+print("🔥 BOT PRO FINAL INICIADO")
+send("🔥 BOT PRO FINAL ONLINE")
 
 while True:
 
