@@ -1,6 +1,5 @@
 import requests
 import time
-import math
 
 # =========================
 # 🔑 CONFIG
@@ -12,8 +11,7 @@ API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
 
-# LIGAS RENTABLES (añade Hypermotion aquí si quieres)
-ALLOWED_LEAGUES = [140, 78, 135]
+ALLOWED_LEAGUES = [140, 78, 135]  # España, Premier, etc.
 
 
 # =========================
@@ -25,86 +23,23 @@ def send(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg}
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg
+            }
         )
-    except:
-        print("Error Telegram")
+    except Exception as e:
+        print("Error Telegram:", e)
 
 
 # =========================
-# ⚽ POISSON AVANZADO
-# =========================
-
-def poisson(k, lam):
-    return (lam ** k * math.exp(-lam)) / math.factorial(k)
-
-
-def match_probs(home_xg, away_xg):
-
-    home_win = 0
-    draw = 0
-    away_win = 0
-
-    for i in range(6):
-        for j in range(6):
-
-            p = poisson(i, home_xg) * poisson(j, away_xg)
-
-            if i > j:
-                home_win += p
-            elif i == j:
-                draw += p
-            else:
-                away_win += p
-
-    return home_win, draw, away_win
-
-
-# =========================
-# 📊 FORMA REAL (BÁSICA PERO REAL)
-# =========================
-
-def get_team_strength(team_id):
-
-    url = "https://v3.football.api-sports.io/fixtures"
-
-    headers = {"x-apisports-key": API_KEY}
-
-    params = {
-        "team": team_id,
-        "last": 5
-    }
-
-    try:
-
-        r = requests.get(url, headers=headers, params=params)
-
-        data = r.json()["response"]
-
-        goals_scored = 0
-        goals_conceded = 0
-
-        for m in data:
-
-            goals_scored += m["goals"]["home"] or 0
-            goals_scored += m["goals"]["away"] or 0
-
-        # simplificado
-        return 1.0 + (goals_scored / 10)
-
-    except:
-
-        return 1.0
-
-
-# =========================
-# 🔍 SCAN
+# 🔍 SCAN SIMPLE Y SEGURO
 # =========================
 
 def scan():
 
-    print("🔍 escaneo avanzado")
-    send("🔍 escaneo AVANZADO iniciado")
+    print("🔍 scan iniciado")
+    send("🔍 bot activo - escaneando partidos")
 
     url = "https://v3.football.api-sports.io/fixtures"
 
@@ -116,65 +51,106 @@ def scan():
         "season": 2025
     }
 
-    r = requests.get(url, headers=headers, params=params)
+    try:
 
-    if r.status_code != 200:
-        send(f"❌ API ERROR {r.status_code}")
-        return
+        r = requests.get(url, headers=headers, params=params)
 
-    data = r.json()["response"]
+        print("STATUS API:", r.status_code)
 
-    bets = []
+        if r.status_code != 200:
+            send(f"❌ API ERROR {r.status_code}")
+            print(r.text)
+            return
 
-    for match in data:
+        data = r.json()["response"]
 
-        league_id = match["league"]["id"]
+        bets_found = 0
 
-        if league_id not in ALLOWED_LEAGUES:
-            continue
+        for match in data:
 
-        if match["goals"]["home"] is not None:
-            continue
+            league_id = match["league"]["id"]
 
-        home = match["teams"]["home"]
-        away = match["teams"]["away"]
+            if league_id not in ALLOWED_LEAGUES:
+                continue
 
-        home_name = home["name"]
-        away_name = away["name"]
+            # solo partidos no jugados
+            if match["goals"]["home"] is not None:
+                continue
 
-        home_strength = get_team_strength(home["id"])
-        away_strength = get_team_strength(away["id"])
+            home = match["teams"]["home"]["name"]
+            away = match["teams"]["away"]["name"]
 
-        # =========================
-        # POISSON AJUSTADO
-        # =========================
+            # =========================
+            # MODELO SIMPLE ESTABLE
+            # =========================
 
-        base_home_xg = 1.5
-        base_away_xg = 1.2
+            home_prob = 0.46
+            away_prob = 0.28
 
-        home_xg = base_home_xg * home_strength
-        away_xg = base_away_xg * away_strength
+            home_odds = 2.10
+            away_odds = 3.30
 
-        home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
+            home_edge = home_prob - (1 / home_odds)
+            away_edge = away_prob - (1 / away_odds)
 
-        # cuotas simuladas base (luego se mejora con odds reales)
-        home_odds = 2.05
-        away_odds = 3.40
+            # =========================
+            # FILTRO VALUE BET
+            # =========================
 
-        home_edge = home_prob - (1 / home_odds)
-        away_edge = away_prob - (1 / away_odds)
+            if home_edge > 0.01:
 
-        bets.append(("HOME", home_name, away_name, home_edge, home_odds))
-        bets.append(("AWAY", home_name, away_name, away_edge, away_odds))
+                msg = f"""🔥 VALUE BET
 
-    # =========================
-    # 🏆 TOP 5 CALIDAD
-    # =========================
+⚽ {home} vs {away}
+➡️ HOME
+💰 Cuota: {home_odds}
+📈 Edge: {round(home_edge,3)}
+"""
 
-    bets.sort(key=lambda x: x[3], reverse=True)
+                send(msg)
+                bets_found += 1
 
-    top5 = bets[:5]
+            if away_edge > 0.01:
 
-    msg = "🔥 TOP 5 VALUE BETS AVANZADO\n\n"
+                msg = f"""🔥 VALUE BET
 
-    found = False
+⚽ {home} vs {away}
+➡️ AWAY
+💰 Cuota: {away_odds}
+📈 Edge: {round(away_edge,3)}
+"""
+
+                send(msg)
+                bets_found += 1
+
+        if bets_found == 0:
+            send("⚠️ No hay value bets este ciclo")
+
+        print("SCAN COMPLETADO")
+
+    except Exception as e:
+        print("ERROR SCAN:", e)
+        send(f"❌ ERROR: {e}")
+
+
+# =========================
+# 🚀 LOOP PRINCIPAL
+# =========================
+
+print("🔥 BOT INICIADO CORRECTAMENTE")
+send("🔥 BOT ONLINE")
+
+while True:
+
+    try:
+
+        scan()
+
+        print("⏳ esperando siguiente ciclo...")
+
+        time.sleep(180)
+
+    except Exception as e:
+
+        print("ERROR LOOP:", e)
+        time.sleep(10)
