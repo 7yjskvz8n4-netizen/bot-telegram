@@ -84,8 +84,8 @@ def scan():
 
             print(home, away, "edge:", edge)
 
-            if edge > 0.05:
-
+            if edge > 0.01:
+                
                 send(f"""🔥 VALUE BET
 
 {home} vs {away}
