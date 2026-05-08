@@ -10,6 +10,8 @@ TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 ODDS_API_KEY = "90ae2f6d7b5ddcd76926f1cf40be2ad7"
 
+BANK = 1000  # 💰 banca inicial
+
 # =========================
 # 📩 TELEGRAM
 # =========================
@@ -36,10 +38,6 @@ def poisson(k, lam):
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
 
 
-# =========================
-# 📊 PROBABILIDAD PARTIDO
-# =========================
-
 def match_probs(home_xg, away_xg):
 
     home_win = 0
@@ -62,13 +60,30 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
+# 💰 KELLY SIMPLE
+# =========================
+
+def kelly(edge, odds):
+
+    if edge <= 0:
+        return 0
+
+    b = odds - 1
+    p = edge + (1 / odds)
+
+    q = 1 - p
+
+    return max(0, (b*p - q) / b)
+
+
+# =========================
 # 🔍 SCAN
 # =========================
 
 def scan():
 
     print("🔍 scan iniciado")
-    send("🔍 escaneando mercados")
+    send("🔍 escaneando mercado")
 
     url = "https://api.the-odds-api.com/v4/sports/upcoming/odds"
 
@@ -79,105 +94,84 @@ def scan():
         "oddsFormat": "decimal"
     }
 
-    try:
+    r = requests.get(url, params=params)
 
-        r = requests.get(url, params=params)
+    if r.status_code != 200:
 
-        if r.status_code != 200:
+        send(f"❌ API ERROR {r.status_code}")
+        return
 
-            send(f"❌ API ERROR {r.status_code}")
-            return
+    data = r.json()
 
-        data = r.json()
+    bets = []
 
-        bets = []
+    for match in data:
 
-        for match in data:
+        try:
 
-            try:
+            home = match["home_team"]
+            away = match["away_team"]
 
-                home = match["home_team"]
-                away = match["away_team"]
+            odds = match["bookmakers"][0]["markets"][0]["outcomes"]
 
-                odds = match["bookmakers"][0]["markets"][0]["outcomes"]
+            home_odds = odds[0]["price"]
+            away_odds = odds[1]["price"]
 
-                # cuotas
-                home_odds = odds[0]["price"]
-                away_odds = odds[1]["price"]
-
-            except:
-                continue
-
-            # =========================
-            # 🔥 XG SIMPLIFICADO
-            # =========================
-
-            home_xg = 1.6
-            away_xg = 1.1
-
-            home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
-
-            # =========================
-            # EDGE
-            # =========================
-
-            home_edge = home_prob - (1 / home_odds)
-            away_edge = away_prob - (1 / away_odds)
-
-            bets.append({
-                "match": f"{home} vs {away}",
-                "home_edge": home_edge,
-                "away_edge": away_edge,
-                "home_odds": home_odds,
-                "away_odds": away_odds
-            })
+        except:
+            continue
 
         # =========================
-        # 🏆 TOP 5 BETS
+        # 🔥 XG BASE (ajustable luego)
         # =========================
 
-        all_bets = []
+        home_xg = 1.6
+        away_xg = 1.1
 
-        for b in bets:
+        home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
 
-            all_bets.append(("HOME", b["match"], b["home_edge"], b["home_odds"]))
-            all_bets.append(("AWAY", b["match"], b["away_edge"], b["away_odds"]))
+        home_edge = home_prob - (1 / home_odds)
+        away_edge = away_prob - (1 / away_odds)
 
-        # ordenar por edge
-        all_bets.sort(key=lambda x: x[2], reverse=True)
+        bets.append(("HOME", home, away, home_edge, home_odds))
+        bets.append(("AWAY", home, away, away_edge, away_odds))
 
-        top5 = all_bets[:5]
 
-        msg = "🔥 TOP 5 VALUE BETS\n\n"
+    # =========================
+    # 🏆 TOP 5 FILTRADO
+    # =========================
 
-        for t in top5:
+    bets.sort(key=lambda x: x[3], reverse=True)
 
-            side, match, edge, odds = t
+    top5 = bets[:5]
 
-            if edge > 0.01:
+    msg = "🔥 TOP 5 VALUE BETS\n\n"
 
-                msg += f"""⚽ {match}
+    for b in top5:
+
+        side, home, away, edge, odds = b
+
+        if edge > 0.01:
+
+            stake = kelly(edge, odds) * BANK
+
+            msg += f"""⚽ {home} vs {away}
 ➡️ {side}
 💰 Cuota: {odds}
 📈 Edge: {round(edge,3)}
+💵 Stake: €{round(stake,2)}
 
 """
 
-        send(msg)
+    send(msg)
 
-        print("TOP 5 enviado")
-
-    except Exception as e:
-
-        print("ERROR:", e)
-        send(f"❌ ERROR: {e}")
+    print("TOP 5 enviado")
 
 
 # =========================
 # 🚀 LOOP
 # =========================
 
-print("🔥 BOT POISSON INICIADO")
+print("🔥 BOT TRADING INICIADO")
 
 while True:
 
@@ -188,5 +182,5 @@ while True:
 
     except Exception as e:
 
-        print("ERROR LOOP:", e)
+        print("ERROR:", e)
         time.sleep(10)
