@@ -18,8 +18,7 @@ BANK = 1000  # 💰 banca inicial
 
 def send(msg):
 
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-
+url = "https://api.the-odds-api.com/v4/sports"
     try:
         requests.post(url, data={
             "chat_id": CHAT_ID,
