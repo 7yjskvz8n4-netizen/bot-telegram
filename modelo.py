@@ -12,7 +12,6 @@ API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
 
-# ligas base (luego se auto-optimizan)
 LEAGUE_POOL = [140, 78, 135, 39, 61]
 
 
@@ -31,7 +30,7 @@ def send(msg):
 
 
 # =========================
-# ⚽ MODELO POISSON
+# ⚽ POISSON
 # =========================
 
 def poisson(k, lam):
@@ -58,7 +57,35 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
-# 📊 ODDS REALES (MERCADO SHARP)
+# 📊 FORM SIMPLE (STABLE)
+# =========================
+
+def team_form(team_id):
+
+    try:
+
+        url = "https://v3.football.api-sports.io/fixtures"
+        headers = {"x-apisports-key": API_KEY}
+
+        params = {"team": team_id, "last": 5}
+
+        r = requests.get(url, headers=headers, params=params)
+        data = r.json().get("response", [])
+
+        goals = 0
+
+        for m in data:
+            goals += (m["goals"]["home"] or 0)
+            goals += (m["goals"]["away"] or 0)
+
+        return goals / 10
+
+    except:
+        return 1
+
+
+# =========================
+# 💰 ODDS MULTI
 # =========================
 
 def get_odds(fixture_id):
@@ -73,40 +100,34 @@ def get_odds(fixture_id):
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
 
-        best = {}
+        best = {"Home": None, "Away": None}
 
         for item in data:
 
-            try:
+            for b in item.get("bookmakers", []):
 
-                for b in item.get("bookmakers", []):
+                for bet in b.get("bets", []):
 
-                    book = b.get("name")
+                    if bet["name"] != "Match Winner":
+                        continue
 
-                    for bet in b.get("bets", []):
+                    for v in bet["values"]:
 
-                        if bet["name"] != "Match Winner":
-                            continue
-
-                        for v in bet["values"]:
-
-                            val = v["value"]
+                        try:
                             odd = float(v["odd"])
 
-                            if val not in best or odd > best[val]["odd"]:
+                            if v["value"] == "Home":
+                                if not best["Home"] or odd > best["Home"]:
+                                    best["Home"] = odd
 
-                                best[val] = {
-                                    "odd": odd,
-                                    "book": book
-                                }
+                            if v["value"] == "Away":
+                                if not best["Away"] or odd > best["Away"]:
+                                    best["Away"] = odd
 
-            except:
-                continue
+                        except:
+                            continue
 
-        home = best.get("Home", {}).get("odd")
-        away = best.get("Away", {}).get("odd")
-
-        return home, away
+        return best["Home"], best["Away"]
 
     except:
 
@@ -114,28 +135,30 @@ def get_odds(fixture_id):
 
 
 # =========================
-# 📊 EDGE SHARP
+# 📉 EDGE
 # =========================
 
 def edge(prob, odds):
 
     if not odds:
-        return None
+        return -999
 
     return prob - (1 / odds)
 
 
 # =========================
-# 🔍 SCAN SHARP
+# 🔍 SCAN PRINCIPAL
 # =========================
 
 def scan():
 
-    print("🔍 SCAN SHARP INICIADO")
-    send("🔍 sistema SHARP activo")
+    print("🔍 SCAN CALIBRADO")
+    send("🔍 bot calibrado activo")
 
     url = "https://v3.football.api-sports.io/fixtures"
+
     headers = {"x-apisports-key": API_KEY}
+
     params = {"season": 2025}
 
     r = requests.get(url, headers=headers, params=params)
@@ -158,39 +181,53 @@ def scan():
         if m["goals"]["home"] is not None:
             continue
 
-        home_team = m["teams"]["home"]["name"]
-        away_team = m["teams"]["away"]["name"]
+        try:
 
-        # =========================
-        # MODELO BASE
-        # =========================
+            home_team = m["teams"]["home"]["name"]
+            away_team = m["teams"]["away"]["name"]
 
-        home_xg = 1.5
-        away_xg = 1.2
+            # =========================
+            # MODELO CALIBRADO
+            # =========================
 
-        home_p, draw_p, away_p = match_probs(home_xg, away_xg)
+            home_form = team_form(m["teams"]["home"]["id"])
+            away_form = team_form(m["teams"]["away"]["id"])
 
-        # =========================
-        # CUOTAS REALES
-        # =========================
+            home_xg = 1.1 + (home_form * 0.6)
+            away_xg = 1.0 + (away_form * 0.6)
 
-        home_odds, away_odds = get_odds(m["fixture"]["id"])
+            home_p, draw_p, away_p = match_probs(home_xg, away_xg)
 
-        if not home_odds or not away_odds:
+            # suavizado tipo mercado
+            home_p = (home_p * 0.9) + 0.05
+            away_p = (away_p * 0.9) + 0.05
+
+            # =========================
+            # CUOTAS REALES
+            # =========================
+
+            home_odds, away_odds = get_odds(m["fixture"]["id"])
+
+            if not home_odds or not away_odds:
+                continue
+
+            # =========================
+            # EDGE
+            # =========================
+
+            home_edge = edge(home_p, home_odds)
+            away_edge = edge(away_p, away_odds)
+
+            # filtro calibrado (no demasiado duro)
+            if home_edge > 0.008 and home_p > 0.25:
+                bets.append(("HOME", home_team, away_team, home_edge, home_odds))
+
+            if away_edge > 0.008 and away_p > 0.25:
+                bets.append(("AWAY", home_team, away_team, away_edge, away_odds))
+
+        except Exception as e:
+            print("MATCH ERROR:", e)
             continue
-
-        # =========================
-        # EDGE REAL
-        # =========================
-
-        home_edge = edge(home_p, home_odds)
-        away_edge = edge(away_p, away_odds)
-
-        if home_edge and home_edge > 0.02:
-            bets.append(("HOME", home_team, away_team, home_edge, home_odds))
-
-        if away_edge and away_edge > 0.02:
-            bets.append(("AWAY", home_team, away_team, away_edge, away_odds))
 
     # =========================
     # 🏆 TOP PICKS
@@ -198,16 +235,17 @@ def scan():
 
     bets.sort(key=lambda x: x[3], reverse=True)
 
-    top = bets[:5]
+    top5 = bets[:5]
 
-    if not top:
-        send("⚠️ Sin edge SHARP este ciclo")
+    if not top5:
+
+        send("⚠️ Sin picks en este ciclo")
         print("SIN BETS")
         return
 
-    msg = "🔥 SHARP VALUE BETS\n\n"
+    msg = "🔥 TOP VALUE BETS CALIBRADOS\n\n"
 
-    for b in top:
+    for b in top5:
 
         side, home, away, edge_val, odds = b
 
@@ -222,15 +260,15 @@ def scan():
 """
 
     send(msg)
-    print("SCAN SHARP OK")
+    print("SCAN OK")
 
 
 # =========================
 # 🚀 LOOP
 # =========================
 
-print("🔥 SISTEMA SHARP INICIADO")
-send("🔥 SHARP BOT ONLINE")
+print("🔥 BOT CALIBRADO INICIADO")
+send("🔥 BOT CALIBRADO ONLINE")
 
 while True:
 
