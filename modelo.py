@@ -108,4 +108,57 @@ def match_probs(home_xg, away_xg):
 
 def get_odds_multi(fixture_id):
 
-    url = "https://v
+    url = "https://v3.football.api-sports.io/odds"
+    headers = {"x-apisports-key": API_KEY}
+
+    params = {"fixture": fixture_id}
+
+    try:
+
+        r = requests.get(url, headers=headers, params=params)
+
+        data = r.json().get("response", [])
+
+        best_home = None
+        best_away = None
+        best_book = "unknown"
+
+        for item in data:
+
+            bookmakers = item.get("bookmakers", [])
+
+            for b in bookmakers:
+
+                book_name = b.get("name", "unknown")
+
+                for bet in b.get("bets", []):
+
+                    if bet.get("name") != "Match Winner":
+                        continue
+
+                    for v in bet.get("values", []):
+
+                        try:
+
+                            odd = float(v["odd"])
+
+                            if v["value"] == "Home":
+
+                                if not best_home or odd > best_home:
+                                    best_home = odd
+                                    best_book = book_name
+
+                            if v["value"] == "Away":
+
+                                if not best_away or odd > best_away:
+                                    best_away = odd
+
+                        except:
+                            continue
+
+        return best_home, best_away, best_book
+
+    except Exception as e:
+
+        print("ODDS ERROR:", e)
+        return None, None, None
