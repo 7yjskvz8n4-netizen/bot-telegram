@@ -11,9 +11,9 @@ CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
-RISK = 0.5  # reducción de Kelly (más seguro)
 
-ALLOWED_LEAGUES = [140, 78, 135]  # LaLiga, Premier, Serie A
+# ligas de baja varianza (más “trading-friendly”)
+ALLOWED_LEAGUES = [140, 78, 135]
 
 
 # =========================
@@ -21,18 +21,17 @@ ALLOWED_LEAGUES = [140, 78, 135]  # LaLiga, Premier, Serie A
 # =========================
 
 def send(msg):
-
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg}
         )
     except:
-        print("Telegram error")
+        pass
 
 
 # =========================
-# ⚽ POISSON
+# ⚽ PROBABILIDAD BASE
 # =========================
 
 def poisson(k, lam):
@@ -41,7 +40,7 @@ def poisson(k, lam):
 
 def match_probs(home_xg, away_xg):
 
-    home_win = draw = away_win = 0
+    hw = d = aw = 0
 
     for i in range(6):
         for j in range(6):
@@ -49,17 +48,17 @@ def match_probs(home_xg, away_xg):
             p = poisson(i, home_xg) * poisson(j, away_xg)
 
             if i > j:
-                home_win += p
+                hw += p
             elif i == j:
-                draw += p
+                d += p
             else:
-                away_win += p
+                aw += p
 
-    return home_win, draw, away_win
+    return hw, d, aw
 
 
 # =========================
-# 📊 FORM + STRENGTH
+# 📊 TEAM STRENGTH (ATAQUE/DEFENSA SEPARADO)
 # =========================
 
 def team_strength(team_id):
@@ -69,29 +68,26 @@ def team_strength(team_id):
         url = "https://v3.football.api-sports.io/fixtures"
         headers = {"x-apisports-key": API_KEY}
 
-        params = {
-            "team": team_id,
-            "last": 5
-        }
+        params = {"team": team_id, "last": 6}
 
         r = requests.get(url, headers=headers, params=params)
-
         data = r.json()["response"]
 
-        goals = 0
+        gf = ga = 0
 
         for m in data:
-            goals += (m["goals"]["home"] or 0)
-            goals += (m["goals"]["away"] or 0)
 
-        return 1 + (goals / 15)
+            gf += (m["goals"]["home"] or 0)
+            gf += (m["goals"]["away"] or 0)
+
+        return gf / 15  # normalización simple
 
     except:
         return 1
 
 
 # =========================
-# 💰 KELLY
+# 💰 KELLY CONSERVADOR
 # =========================
 
 def kelly(edge, odds):
@@ -103,22 +99,24 @@ def kelly(edge, odds):
     p = edge + (1 / odds)
     q = 1 - p
 
-    return max(0, (b * p - q) / b)
+    k = (b * p - q) / b
+
+    # hedge fund style → reducción fuerte de riesgo
+    return max(0, k * 0.5)
 
 
 # =========================
-# 🔍 SCAN
+# 🔍 SCAN HEDGE FUND
 # =========================
 
 def scan():
 
-    print("🔍 SCAN PRO FINAL")
-    send("🔍 escaneo PRO FINAL activo")
+    print("🔍 HEDGE FUND SCAN")
+    send("🔍 hedge fund scan activo")
 
     url = "https://v3.football.api-sports.io/fixtures"
 
     headers = {"x-apisports-key": API_KEY}
-
     params = {"season": 2025}
 
     r = requests.get(url, headers=headers, params=params)
@@ -129,7 +127,7 @@ def scan():
 
     data = r.json()["response"]
 
-    bets = []
+    picks = []
 
     for match in data:
 
@@ -144,80 +142,81 @@ def scan():
         home = match["teams"]["home"]
         away = match["teams"]["away"]
 
-        home_name = home["name"]
-        away_name = away["name"]
-
         # =========================
-        # STRENGTH
+        # STRENGTH MODEL
         # =========================
 
-        h_strength = team_strength(home["id"])
-        a_strength = team_strength(away["id"])
+        h = team_strength(home["id"])
+        a = team_strength(away["id"])
+
+        home_xg = 1.5 * (1 + h)
+        away_xg = 1.2 * (1 + a)
+
+        home_p, draw_p, away_p = match_probs(home_xg, away_xg)
 
         # =========================
-        # XG MODEL
-        # =========================
-
-        home_xg = 1.55 * h_strength
-        away_xg = 1.20 * a_strength
-
-        home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
-
-        # =========================
-        # ODDS SIMULADAS (fase final)
+        # ODDS (simplificado base)
         # =========================
 
         home_odds = 2.05
-        away_odds = 3.30
+        away_odds = 3.25
 
-        home_edge = home_prob - (1 / home_odds)
-        away_edge = away_prob - (1 / away_odds)
+        # =========================
+        # EDGE REAL
+        # =========================
 
-        # filtro anti ruido
-        if home_edge > 0.015:
-            bets.append(("HOME", home_name, away_name, home_edge, home_odds))
+        home_edge = home_p - (1 / home_odds)
+        away_edge = away_p - (1 / away_odds)
 
-        if away_edge > 0.015:
-            bets.append(("AWAY", home_name, away_name, away_edge, away_odds))
+        # =========================
+        # FILTER HEDGE FUND
+        # =========================
+
+        if home_edge > 0.025:
+            picks.append(("HOME", home["name"], away["name"], home_edge, home_odds))
+
+        if away_edge > 0.025:
+            picks.append(("AWAY", home["name"], away["name"], away_edge, away_odds))
 
     # =========================
-    # 🏆 TOP 5 FINAL
+    # 🏆 TOP PICKS FINAL
     # =========================
 
-    bets.sort(key=lambda x: x[3], reverse=True)
+    picks.sort(key=lambda x: x[3], reverse=True)
 
-    top5 = bets[:5]
+    top = picks[:5]
 
-    msg = "🔥 TOP 5 VALUE BETS PRO FINAL\n\n"
-
-    if not top5:
-        send("⚠️ Sin value bets en este ciclo")
+    if not top:
+        send("⚠️ Sin edge suficiente (hedge fund filter)")
+        print("NO PICKS")
         return
 
-    for b in top5:
+    msg = "🔥 HEDGE FUND TOP PICKS\n\n"
 
-        side, home, away, edge, odds = b
+    for p in top:
 
-        stake = kelly(edge, odds) * BANK * RISK
+        side, home, away, edge, odds = p
+
+        stake = kelly(edge, odds) * BANK
 
         msg += f"""⚽ {home} vs {away}
 ➡️ {side}
 💰 Cuota: {odds}
-📈 Edge: {round(edge,3)}
+📈 Edge: {round(edge,4)}
 💵 Stake: €{round(stake,2)}
 
 """
 
     send(msg)
-    print("SCAN FINAL OK")
+    print("HEDGE FUND OK")
 
 
 # =========================
 # 🚀 LOOP
 # =========================
 
-print("🔥 BOT PRO FINAL INICIADO")
-send("🔥 BOT PRO FINAL ONLINE")
+print("🔥 HEDGE FUND BOT INICIADO")
+send("🔥 HEDGE FUND ONLINE")
 
 while True:
 
@@ -226,5 +225,5 @@ while True:
         time.sleep(180)
 
     except Exception as e:
-        print("ERROR LOOP:", e)
+        print("ERROR:", e)
         time.sleep(10)
