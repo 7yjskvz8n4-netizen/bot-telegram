@@ -8,7 +8,10 @@ import math
 
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
+
+# 👇 PEGA TU API KEY REAL
 ODDS_API_KEY = "8e4b2331dd846e4be1584fa64ccf23c8"
+
 # =========================
 # 📩 TELEGRAM
 # =========================
@@ -18,11 +21,14 @@ def send(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
     try:
+
         requests.post(url, data={
             "chat_id": CHAT_ID,
             "text": msg
         })
+
     except Exception as e:
+
         print("Error Telegram:", e)
 
 
@@ -32,7 +38,7 @@ def send(msg):
 
 def simple_prob_home():
 
-    # Probabilidad fija temporal
+    # Probabilidad base temporal
     return 0.45
 
 
@@ -43,14 +49,17 @@ def simple_prob_home():
 def scan():
 
     print("🔍 scan iniciado")
+
     send("🔍 bot escaneando partidos")
 
-    url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
+    # 👇 ENDPOINT MÁS ESTABLE
+    url = "https://api.the-odds-api.com/v4/sports/upcoming/odds"
 
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "eu",
-        "markets": "h2h"
+        "markets": "h2h",
+        "oddsFormat": "decimal"
     }
 
     try:
@@ -59,15 +68,30 @@ def scan():
 
         print("STATUS API:", response.status_code)
 
+        # =========================
+        # CONTROL ERRORES API
+        # =========================
+
+        if response.status_code != 200:
+
+            print("ERROR API:", response.text)
+
+            send(f"❌ API ERROR {response.status_code}")
+
+            return
+
         data = response.json()
 
         # =========================
-        # DEBUG API
+        # DEBUG
         # =========================
 
         if not data:
+
             print("No hay partidos")
+
             send("⚠️ No hay partidos disponibles")
+
             return
 
         print("Partidos encontrados:", len(data))
@@ -84,14 +108,18 @@ def scan():
                 away = match["away_team"]
 
                 bookmakers = match["bookmakers"][0]
+
                 markets = bookmakers["markets"][0]
+
                 outcomes = markets["outcomes"]
 
+                # 👇 CUOTA LOCAL
                 odds = outcomes[0]["price"]
 
             except Exception as e:
 
                 print("Error leyendo partido:", e)
+
                 continue
 
             # =========================
@@ -103,10 +131,6 @@ def scan():
             market_prob = 1 / odds
 
             edge = prob_model - market_prob
-
-            # =========================
-            # DEBUG
-            # =========================
 
             print(
                 "PARTIDO:",
@@ -136,13 +160,13 @@ def scan():
 💎 Edge: {round(edge,3)}
 """
 
-                print("VALUE BET ENCONTRADA")
+                print("✅ VALUE BET ENCONTRADA")
 
                 send(msg)
 
     except Exception as e:
 
-        print("ERROR API:", e)
+        print("ERROR GENERAL API:", e)
 
         send(f"❌ ERROR API: {e}")
 
@@ -161,10 +185,11 @@ while True:
 
         print("⏳ Esperando siguiente ciclo...")
 
+        # 30 minutos
         time.sleep(1800)
 
     except Exception as e:
 
-        print("ERROR GENERAL:", e)
+        print("ERROR LOOP:", e)
 
         time.sleep(10)
