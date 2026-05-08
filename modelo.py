@@ -83,6 +83,111 @@ def kelly(edge, odds):
 def scan():
 
     print("🔍 scan iniciado")
+    send("🔍 escaneando mercados")
+
+    url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds"
+
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",
+        "markets": "h2h",
+        "oddsFormat": "decimal"
+    }
+
+    r = requests.get(url, params=params)
+
+    print("STATUS API:", r.status_code)
+
+    if r.status_code != 200:
+
+        send(f"❌ API ERROR {r.status_code}")
+        print(r.text)
+        return
+
+    data = r.json()
+
+    bets = []
+
+    for match in data:
+
+        try:
+
+            home = match.get("home_team")
+            away = match.get("away_team")
+
+            bookmakers = match.get("bookmakers", [])
+
+            if not bookmakers:
+                continue
+
+            markets = bookmakers[0].get("markets", [])
+
+            if not markets:
+                continue
+
+            outcomes = markets[0].get("outcomes", [])
+
+            if len(outcomes) < 2:
+                continue
+
+            home_odds = outcomes[0]["price"]
+            away_odds = outcomes[1]["price"]
+
+        except:
+            continue
+
+        # =========================
+        # MODELO SIMPLE PERO FUNCIONAL
+        # =========================
+
+        home_xg = 1.6
+        away_xg = 1.1
+
+        home_prob, draw_prob, away_prob = match_probs(home_xg, away_xg)
+
+        home_edge = home_prob - (1 / home_odds)
+        away_edge = away_prob - (1 / away_odds)
+
+        bets.append(("HOME", f"{home} vs {away}", home_edge, home_odds))
+        bets.append(("AWAY", f"{home} vs {away}", away_edge, away_odds))
+
+    # =========================
+    # SI NO HAY DATOS
+    # =========================
+
+    if not bets:
+
+        send("⚠️ No se encontraron bets en este ciclo")
+        print("NO BETS")
+        return
+
+    # =========================
+    # TOP 5
+    # =========================
+
+    bets.sort(key=lambda x: x[2], reverse=True)
+
+    top5 = bets[:5]
+
+    msg = "🔥 TOP 5 VALUE BETS\n\n"
+
+    for b in top5:
+
+        side, match, edge, odds = b
+
+        if edge > 0.005:  # más sensible
+
+            msg += f"""⚽ {match}
+➡️ {side}
+💰 Cuota: {odds}
+📈 Edge: {round(edge,3)}
+
+"""
+
+    send(msg)
+
+    print("TOP 5 enviado")
+    print("🔍 scan iniciado")
     send("🔍 escaneando mercado")
 
     url = "https://api.the-odds-api.com/v4/sports/upcoming/odds"
