@@ -23,21 +23,22 @@ def send(msg):
             "chat_id": CHAT_ID,
             "text": msg
         })
-    except:
-        print("Error enviando Telegram")
+    except Exception as e:
+        print("Error Telegram:", e)
 
 
 # =========================
-# 📊 PROBABILIDAD SIMPLE
+# 📊 MODELO SIMPLE
 # =========================
 
 def simple_prob_home():
 
-    return 0.45  # base inicial estable
+    # Probabilidad fija temporal
+    return 0.45
 
 
 # =========================
-# 🔍 SCAN DE PARTIDOS
+# 🔍 SCANNER
 # =========================
 
 def scan():
@@ -57,13 +58,24 @@ def scan():
 
         response = requests.get(url, params=params)
 
-        print("status API:", response.status_code)
+        print("STATUS API:", response.status_code)
 
         data = response.json()
 
+        # =========================
+        # DEBUG API
+        # =========================
+
         if not data:
-            send("⚠️ No hay datos disponibles")
+            print("No hay partidos")
+            send("⚠️ No hay partidos disponibles")
             return
+
+        print("Partidos encontrados:", len(data))
+
+        # =========================
+        # RECORRER PARTIDOS
+        # =========================
 
         for match in data:
 
@@ -72,36 +84,72 @@ def scan():
                 home = match["home_team"]
                 away = match["away_team"]
 
-                odds = match["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
+                bookmakers = match["bookmakers"][0]
+                markets = bookmakers["markets"][0]
+                outcomes = markets["outcomes"]
 
-            except:
+                odds = outcomes[0]["price"]
+
+            except Exception as e:
+
+                print("Error leyendo partido:", e)
                 continue
 
+            # =========================
+            # MODELO
+            # =========================
+
             prob_model = simple_prob_home()
+
             market_prob = 1 / odds
 
             edge = prob_model - market_prob
 
-            print(home, away, "edge:", edge)
+            # =========================
+            # DEBUG
+            # =========================
+
+            print(
+                "PARTIDO:",
+                home,
+                "vs",
+                away,
+                "| Cuota:",
+                odds,
+                "| Edge:",
+                round(edge, 3)
+            )
+
+            # =========================
+            # VALUE BET
+            # =========================
 
             if edge > 0.01:
-                
-                send(f"""🔥 VALUE BET
 
-{home} vs {away}
+                msg = f"""🔥 VALUE BET
 
-Cuota: {odds}
-Prob modelo: {round(prob_model,2)}
-Edge: {round(edge,3)}
-""")
+⚽ {home} vs {away}
+
+💰 Cuota: {odds}
+
+📈 Prob modelo: {round(prob_model,2)}
+
+💎 Edge: {round(edge,3)}
+"""
+
+                print("VALUE BET ENCONTRADA")
+
+                send(msg)
 
     except Exception as e:
+
         print("ERROR API:", e)
-        send(f"❌ error API: {e}")
+
+        send(f"❌ ERROR API: {e}")
 
 
 # =========================
-# 🚀 LOOP PRINCIPAL
+# 🚀 MAIN LOOP
 # =========================
 
 print("🔥 BOT INICIADO")
@@ -111,9 +159,13 @@ while True:
     try:
 
         scan()
+
+        print("⏳ Esperando siguiente ciclo...")
+
         time.sleep(1800)
 
     except Exception as e:
 
         print("ERROR GENERAL:", e)
+
         time.sleep(10)
