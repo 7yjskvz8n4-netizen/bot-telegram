@@ -333,14 +333,14 @@ def wait_until_10():
     while True:
 
         now = datetime.now()
-        target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
 
         if now >= target:
             target += timedelta(days=1)
 
         wait = (target - now).total_seconds()
 
-        print(f"⏳ Esperando {int(wait)} segundos hasta 10:00 AM ")
+        print(f"⏳ Esperando {int(wait)} segundos hasta 8:00 AM ")
 
         time.sleep(wait)
 
