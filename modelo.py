@@ -333,6 +333,7 @@ def wait_until_10():
     while True:
 
         now = datetime.now()
+       
         target = now.replace(hour=8, minute=0, second=0, microsecond=0)
 
         if now >= target:
@@ -346,7 +347,7 @@ def wait_until_10():
 
         scan()
 
-        time.sleep(65)
+        time.sleep(60)
 
 
 # =========================
@@ -356,4 +357,4 @@ def wait_until_10():
 print("🔥 HEDGE FUND BOT INICIADO")
 send("🔥 Hedge Fund Bot activo")
 
-wait_until_8()
+wait_until_10()
