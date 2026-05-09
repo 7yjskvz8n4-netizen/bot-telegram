@@ -2,381 +2,155 @@ import requests
 import math
 import time
 import json
+import random
 from datetime import datetime, timedelta
 
 # =========================
-# 🔑 CONFIG
+# 🔑 CONFIG (RELLENA ESTO)
 # =========================
-
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 200
 KELLY_FACTOR = 0.25
-
 MIN_ODDS = 1.65
-FAV_THRESHOLD = 0.70
-
 BASE_URL = "https://v3.football.api-sports.io"
-
 RESULTS_FILE = "results.json"
 
+# LIGAS
+LEAGUES = [39, 140, 135, 78, 61, 40, 141, 1352, 79]
 
 # =========================
-# 🏆 LIGAS
+# 📩 TELEGRAM (REAL)
 # =========================
-
-LEAGUES = [
-    39, 140, 135, 78, 61,
-    40, 141, 1352, 79
-]
-
-
-# =========================
-# 📩 TELEGRAM
-# =========================
-
 def send(msg):
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg}
-        )
-    except:
-        print("Telegram error")
-
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
+        print(f"📡 Telegram enviado")
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
 
 # =========================
-# ⚽ POISSON
+# ⚽ MATEMÁTICAS (POISSON & KELLY)
 # =========================
-
 def poisson(k, lam):
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
 
-
 def match_probs(home_xg, away_xg):
-
     home = draw = away = 0
-
     for i in range(6):
         for j in range(6):
             p = poisson(i, home_xg) * poisson(j, away_xg)
-
-            if i > j:
-                home += p
-            elif i == j:
-                draw += p
-            else:
-                away += p
-
+            if i > j: home += p
+            elif i == j: draw += p
+            else: away += p
     return home, draw, away
 
+def kelly(prob, odds):
+    b = odds - 1
+    q = 1 - prob
+    f = (prob * b - q) / b
+    return max(0, f * KELLY_FACTOR)
 
 # =========================
-# 📊 FORMA
+# 📊 DATOS API
 # =========================
-
 def team_form(team_id):
-
     try:
         url = f"{BASE_URL}/fixtures"
         headers = {"x-apisports-key": API_KEY}
         params = {"team": team_id, "last": 5}
-
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
-
-        goals = 0
-
-        for m in data:
-            goals += (m["goals"]["home"] or 0)
-            goals += (m["goals"]["away"] or 0)
-
+        goals = sum((m["goals"]["home"] or 0) + (m["goals"]["away"] or 0) for m in data)
         return goals / 10
-
     except:
         return 1
 
-
-# =========================
-# 💰 ODDS
-# =========================
-
 def get_odds(fixture_id):
-
     url = f"{BASE_URL}/odds"
     headers = {"x-apisports-key": API_KEY}
     params = {"fixture": fixture_id}
-
     try:
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
-
-        best = {"Home": None, "Away": None}
-
+        best_home = 0
+        best_away = 0
         for item in data:
             for b in item.get("bookmakers", []):
                 for bet in b.get("bets", []):
-                    if bet.get("name") != "Match Winner":
-                        continue
-
-                    for v in bet.get("values", []):
-
-                        try:
-                            odd = float(v["odd"])
-
-                            if v["value"] == "Home":
-                                best["Home"] = max(best["Home"] or 0, odd)
-
-                            if v["value"] == "Away":
-                                best["Away"] = max(best["Away"] or 0, odd)
-
-                        except:
-                            continue
-
-        return best["Home"], best["Away"]
-
+                    if bet.get("name") == "Match Winner":
+                        for v in bet.get("values", []):
+                            if v["value"] == "Home": best_home = max(best_home, float(v["odd"]))
+                            if v["value"] == "Away": best_away = max(best_away, float(v["odd"]))
+        return best_home, best_away
     except:
-        return None, None
-
-
-# =========================
-# 📉 EDGE
-# =========================
-
-def edge(prob, odds):
-    return prob - (1 / odds)
-
+        return 0, 0
 
 # =========================
-# 🧠 KELLY (REDUCIDO)
+# 🔍 SCAN (LÓGICA PRINCIPAL)
 # =========================
-
-def kelly(prob, odds):
-
-    b = odds - 1
-    q = 1 - prob
-
-    f = (prob * b - q) / b
-
-    return max(0, f * KELLY_FACTOR)
-
-
-# =========================
-# 💾 LOG RESULTADOS
-# =========================
-
-def save_result(data):
-
-    try:
-        try:
-            with open(RESULTS_FILE, "r") as f:
-                results = json.load(f)
-        except:
-            results = []
-
-        results.append(data)
-
-        with open(RESULTS_FILE, "w") as f:
-            json.dump(results, f)
-
-    except:
-        pass
-
-
-# =========================
-# 🔍 SCAN
-# =========================
-
 def scan():
-
-    print("🔍 HEDGE FUND BOT INICIADO")
-    send("🔥 Bot Hedge Fund activo (10:00)")
-
-    url = f"{BASE_URL}/fixtures"
+    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de mercado...")
+    
     headers = {"x-apisports-key": API_KEY}
-    params = {"season": 2025}
-
-    r = requests.get(url, headers=headers, params=params)
-
-    if r.status_code != 200:
-        send("❌ API ERROR")
-        return
-
-    data = r.json().get("response", [])
-
-    value_bets = []
-    favorites = []
-    league_stats = {}
-
-    for m in data:
-
-        try:
-
+    params = {"season": 2025, "next": 50} # Ajustado para buscar próximos partidos
+    
+    try:
+        r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params)
+        data = r.json().get("response", [])
+        
+        value_bets = []
+        
+        for m in data:
             league = m["league"]["id"]
-
-            if league not in LEAGUES:
-                continue
-
-            if m["goals"]["home"] is not None:
-                continue
-
-            home = m["teams"]["home"]["name"]
-            away = m["teams"]["away"]["name"]
+            if league not in LEAGUES: continue
 
             home_id = m["teams"]["home"]["id"]
             away_id = m["teams"]["away"]["id"]
+            
+            # Cálculo de xG basado en forma
+            home_xg = 1.1 + (team_form(home_id) * 0.6)
+            away_xg = 1.0 + (team_form(away_id) * 0.6)
+            
+            h_p, d_p, a_p = match_probs(home_xg, away_xg)
+            h_odds, a_odds = get_odds(m["fixture"]["id"])
+            
+            # Analizar Home
+            if h_odds >= MIN_ODDS:
+                edge = h_p - (1/h_odds)
+                if edge > 0:
+                    stake = kelly(h_p, h_odds) * BANK
+                    value_bets.append(f"⚽ <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n➡️ Lado: HOME | Cuota: {h_odds}\n📈 Edge: {round(edge,3)} | Stake: €{round(stake,2)}")
 
-            home_form = team_form(home_id)
-            away_form = team_form(away_id)
+        if value_bets:
+            full_msg = "🔥 <b>VALUE BETS ENCONTRADAS</b>\n\n" + "\n\n".join(value_bets[:5])
+            send(full_msg)
+        else:
+            print("No se encontraron apuestas con valor en este ciclo.")
 
-            home_xg = 1.1 + (home_form * 0.6)
-            away_xg = 1.0 + (away_form * 0.6)
-
-            home_p, draw_p, away_p = match_probs(home_xg, away_xg)
-
-            home_p = (home_p * 0.9) + 0.05
-            away_p = (away_p * 0.9) + 0.05
-
-            home_odds, away_odds = get_odds(m["fixture"]["id"])
-
-            if not home_odds or not away_odds:
-                continue
-
-            # =========================
-            # VALUE BETS + KELLY
-            # =========================
-
-            if home_odds >= MIN_ODDS:
-                e = edge(home_p, home_odds)
-                if e > 0:
-                    stake = kelly(home_p, home_odds) * BANK
-
-                    value_bets.append(("HOME", home, away, e, home_odds, stake))
-
-                    league_stats[league] = league_stats.get(league, 0) + 1
-
-                    save_result({
-                        "match": f"{home} vs {away}",
-                        "side": "HOME",
-                        "odds": home_odds,
-                        "prob": home_p,
-                        "stake": stake
-                    })
-
-            if away_odds >= MIN_ODDS:
-                e = edge(away_p, away_odds)
-                if e > 0:
-                    stake = kelly(away_p, away_odds) * BANK
-
-                    value_bets.append(("AWAY", home, away, e, away_odds, stake))
-
-                    league_stats[league] = league_stats.get(league, 0) + 1
-
-        except:
-            continue
-
-    # =========================
-    # TOP PICKS
-    # =========================
-
-    value_bets.sort(key=lambda x: x[3], reverse=True)
-    top = value_bets[:5]
-
-    msg = "🔥 VALUE BETS (HEDGE FUND MODE)\n\n"
-
-    for v in top:
-        side, home, away, e, odds, stake = v
-
-        msg += f"""⚽ {home} vs {away}
-➡️ {side}
-💰 Cuota: {odds}
-📈 Edge: {round(e,3)}
-💵 Stake: €{round(stake,2)}
-
-"""
-
-    # =========================
-    # FAVORITOS
-    # =========================
-
-    if favorites:
-        msg += "\n🟡 FAVORITOS (>70%)\n\n"
-
-        for f in favorites[:5]:
-            home, away, prob, side = f
-            msg += f"""⚽ {home} vs {away}
-📊 Prob: {round(prob*100,1)}%
-
-"""
-
-    # =========================
-    # RANKING LIGAS
-    # =========================
-
-    msg += "\n🏆 LIGAS MÁS RENTABLES\n\n"
-
-    for k, v in sorted(league_stats.items(), key=lambda x: x[1], reverse=True)[:5]:
-        msg += f"Liga {k}: {v} picks\n"
-
-    send(msg)
-    print("SCAN OK")
-
+    except Exception as e:
+        print(f"❌ Error en scan: {e}")
 
 # =========================
-# ⏰ ESPERA + LOOP PRINCIPAL
+# 🚀 LOOP DE EJECUCIÓN
 # =========================
-
-import time
-import random
-from datetime import datetime, timedelta
-
-# =========================
-# 🛠️ FUNCIONES (Definiciones)
-# =========================
-
-def scan():
-    """
-    Aquí va tu lógica real de escaneo.
-    """
-    print("📊 Analizando mercados en tiempo real...")
-    # Asegúrate de que tu lógica de búsqueda esté aquí o importada
-    pass
-
-def send(message):
-    """
-    Función para enviar notificaciones (Telegram, Discord, etc.)
-    """
-    print(f"📡 NOTIFICACIÓN: {message}")
-
-def wait_between_scans():
-    """
-    Bucle principal que ejecuta el escaneo y espera ~5 min.
-    """
+if __name__ == "__main__":
+    print("🚀 HEDGE FUND BOT ACTIVADO")
+    send("🟢 <b>Bot Hedge Fund</b> iniciado correctamente. Escaneando cada 5 min.")
+    
     while True:
         try:
-            print("\n🔍 Buscando apuestas de valor...")
-            scan() 
-            
-            # Intervalo de 5 min (300s) con variación para evitar detección
-            wait_time = 300 + random.randint(-10, 10)
-            print(f"✅ Escaneo finalizado. Próximo ciclo en {wait_time} segundos...")
+            scan()
+            # Espera 5 min + un poco de aleatoriedad
+            wait_time = 300 + random.randint(-15, 15)
+            print(f"⏳ Durmiendo {wait_time} segundos...")
             time.sleep(wait_time)
-            
+        except KeyboardInterrupt:
+            print("Stopping...")
+            break
         except Exception as e:
-            # Si algo falla (red, API, etc.), el bot no se detiene
-            print(f"❌ Error durante el escaneo: {e}")
-            print("🔄 Reintentando en 30 segundos...")
-            time.sleep(30)
-
-# =========================
-# 🚀 EJECUCIÓN (Arranque inmediato)
-# =========================
-
-if __name__ == "__main__":
-    print("🔥 HEDGE FUND BOT INICIADO (MODO INMEDIATO)")
-    send("🔥 Hedge Fund Bot activo ahora mismo")
-    
-    # Inicia directamente el bucle infinito
-    wait_between_scans()
+            print(f"Falló el loop: {e}")
+            time.sleep(60)
