@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # 🔑 CONFIG
 # =========================
 
-TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
+TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-"
 CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
