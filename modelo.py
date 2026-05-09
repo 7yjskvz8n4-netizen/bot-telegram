@@ -328,33 +328,71 @@ def scan():
 # ⏰ 10:00 LOOP
 # =========================
 
+import time
+import random
+from datetime import datetime, timedelta
+
+# =========================
+# 🛠️ FUNCIONES (Definiciones)
+# =========================
+
+def scan():
+    """Aquí va tu lógica real de escaneo."""
+    # Ejemplo: lógica para conectar con APIs de casas de apuestas
+    print("📊 Analizando mercados...")
+    pass
+
+def send(message):
+    """Función para notificaciones (Telegram, Discord, etc.)"""
+    print(f"📡 NOTIFICACIÓN: {message}")
+
 def wait_until_10():
+    """Calcula cuánto falta para las 10:00 AM y pone el bot en pausa."""
+    now = datetime.now()
+    target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+    
+    # Si ya pasaron las 10:00 AM hoy, esperamos a las 10:00 AM de mañana
+    if now > target:
+        target += timedelta(days=1)
+    
+    diff = (target - now).total_seconds()
+    
+    horas = int(diff // 3600)
+    minutos = int((diff % 3600) // 60)
+    
+    print(f"⏳ Modo espera activo. Faltan {horas}h {minutos}min para las 10:00 AM...")
+    time.sleep(diff)
 
+def wait_between_scans():
+    """Bucle principal de escaneo con intervalo aleatorio (jitter)."""
     while True:
-
-        now = datetime.now()
-       
-        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
-
-        if now >= target:
-            target += timedelta(days=1)
-
-        wait = (target - now).total_seconds()
-
-        print(f"⏳ Esperando {int(wait)} segundos  ")
-
-        time.sleep(wait)
-
-        scan()
-
-        time.sleep(60)
-
+        try:
+            print("\n🔍 Buscando apuestas de valor...")
+            scan() 
+            
+            # 5 minutos (300s) con variación de +/- 10 segundos
+            wait_time = 300 + random.randint(-10, 10)
+            print(f"✅ Escaneo finalizado. Próximo ciclo en {wait_time} segundos...")
+            time.sleep(wait_time)
+            
+        except Exception as e:
+            print(f"❌ Error crítico durante el escaneo: {e}")
+            print("🔄 Reintentando en 30 segundos...")
+            time.sleep(30)
 
 # =========================
-# 🚀 START
+# 🚀 EJECUCIÓN (El motor)
 # =========================
 
-print("🔥 HEDGE FUND BOT INICIADO")
-send("🔥 Hedge Fund Bot activo")
-
-wait_until_10()
+if __name__ == "__main__":
+    # Este bloque siempre debe ir al FINAL del archivo
+    print("🔥 HEDGE FUND BOT CONFIGURADO")
+    send("🔥 Hedge Fund Bot activo y programado")
+    print("Presiona Ctrl+C para detener el proceso.")
+    
+    # 1. Primero esperamos a que den las 10:00
+    wait_until_10()
+    
+    # 2. Una vez son las 10:00, entramos en el loop infinito
+    print("⏰ ¡Hora de inicio alcanzada! Iniciando secuencia de escaneo...")
+    wait_between_scans()
