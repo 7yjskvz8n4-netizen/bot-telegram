@@ -1,6 +1,7 @@
 import requests
 import math
 import time
+import json
 from datetime import datetime, timedelta
 
 # =========================
@@ -11,21 +12,24 @@ TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
-BANK = 1000
+BANK = 200
+KELLY_FACTOR = 0.25
 
 MIN_ODDS = 1.65
 FAV_THRESHOLD = 0.70
 
 BASE_URL = "https://v3.football.api-sports.io"
 
+RESULTS_FILE = "results.json"
+
 
 # =========================
-# 🏆 LIGAS TOP + SEGUNDA
+# 🏆 LIGAS
 # =========================
 
 LEAGUES = [
-    39, 140, 135, 78, 61,   # top
-    40, 141, 1352, 79       # segundas
+    39, 140, 135, 78, 61,
+    40, 141, 1352, 79
 ]
 
 
@@ -39,8 +43,8 @@ def send(msg):
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg}
         )
-    except Exception as e:
-        print("Telegram error:", e)
+    except:
+        print("Telegram error")
 
 
 # =========================
@@ -70,7 +74,7 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
-# 📊 FORMA EQUIPO
+# 📊 FORMA
 # =========================
 
 def team_form(team_id):
@@ -96,7 +100,7 @@ def team_form(team_id):
 
 
 # =========================
-# 💰 ODDS REALES
+# 💰 ODDS
 # =========================
 
 def get_odds(fixture_id):
@@ -123,12 +127,11 @@ def get_odds(fixture_id):
                             odd = float(v["odd"])
 
                             if v["value"] == "Home":
-                                if not best["Home"] or odd > best["Home"]:
-                                    best["Home"] = odd
+                                best["Home"] = max(best["Home"] or 0, odd)
 
                             if v["value"] == "Away":
-                                if not best["Away"] or odd > best["Away"]:
-                                    best["Away"] = odd
+                                best["Away"] = max(best["Away"] or 0, odd)
+
                         except:
                             continue
 
@@ -147,33 +150,65 @@ def edge(prob, odds):
 
 
 # =========================
-# 🔍 SCAN JORNADA
+# 🧠 KELLY (REDUCIDO)
+# =========================
+
+def kelly(prob, odds):
+
+    b = odds - 1
+    q = 1 - prob
+
+    f = (prob * b - q) / b
+
+    return max(0, f * KELLY_FACTOR)
+
+
+# =========================
+# 💾 LOG RESULTADOS
+# =========================
+
+def save_result(data):
+
+    try:
+        try:
+            with open(RESULTS_FILE, "r") as f:
+                results = json.load(f)
+        except:
+            results = []
+
+        results.append(data)
+
+        with open(RESULTS_FILE, "w") as f:
+            json.dump(results, f)
+
+    except:
+        pass
+
+
+# =========================
+# 🔍 SCAN
 # =========================
 
 def scan():
 
-    print("🔍 SCAN PRO ESTABLE")
-    send("🔍 Bot PRO activo (10:00)")
+    print("🔍 HEDGE FUND BOT INICIADO")
+    send("🔥 Bot Hedge Fund activo (10:00)")
 
     url = f"{BASE_URL}/fixtures"
     headers = {"x-apisports-key": API_KEY}
     params = {"season": 2025}
 
-    try:
-        r = requests.get(url, headers=headers, params=params, timeout=20)
-    except Exception as e:
-        send("❌ ERROR API TIMEOUT")
-        print(e)
-        return
+    r = requests.get(url, headers=headers, params=params)
 
     if r.status_code != 200:
-        send(f"❌ API ERROR {r.status_code}")
+        send("❌ API ERROR")
         return
 
     data = r.json().get("response", [])
 
     value_bets = []
     favorites = []
+    league_stats = {}
 
     for m in data:
 
@@ -190,8 +225,11 @@ def scan():
             home = m["teams"]["home"]["name"]
             away = m["teams"]["away"]["name"]
 
-            home_form = team_form(m["teams"]["home"]["id"])
-            away_form = team_form(m["teams"]["away"]["id"])
+            home_id = m["teams"]["home"]["id"]
+            away_id = m["teams"]["away"]["id"]
+
+            home_form = team_form(home_id)
+            away_form = team_form(away_id)
 
             home_xg = 1.1 + (home_form * 0.6)
             away_xg = 1.0 + (away_form * 0.6)
@@ -207,44 +245,49 @@ def scan():
                 continue
 
             # =========================
-            # VALUE BETS
+            # VALUE BETS + KELLY
             # =========================
 
             if home_odds >= MIN_ODDS:
                 e = edge(home_p, home_odds)
                 if e > 0:
-                    value_bets.append(("HOME", home, away, e, home_odds))
+                    stake = kelly(home_p, home_odds) * BANK
+
+                    value_bets.append(("HOME", home, away, e, home_odds, stake))
+
+                    league_stats[league] = league_stats.get(league, 0) + 1
+
+                    save_result({
+                        "match": f"{home} vs {away}",
+                        "side": "HOME",
+                        "odds": home_odds,
+                        "prob": home_p,
+                        "stake": stake
+                    })
 
             if away_odds >= MIN_ODDS:
                 e = edge(away_p, away_odds)
                 if e > 0:
-                    value_bets.append(("AWAY", home, away, e, away_odds))
+                    stake = kelly(away_p, away_odds) * BANK
 
-            # =========================
-            # FAVORITOS
-            # =========================
+                    value_bets.append(("AWAY", home, away, e, away_odds, stake))
 
-            if home_p >= FAV_THRESHOLD:
-                favorites.append((home, away, home_p, "HOME"))
-
-            if away_p >= FAV_THRESHOLD:
-                favorites.append((home, away, away_p, "AWAY"))
+                    league_stats[league] = league_stats.get(league, 0) + 1
 
         except:
             continue
 
     # =========================
-    # TOP VALUE BETS
+    # TOP PICKS
     # =========================
 
     value_bets.sort(key=lambda x: x[3], reverse=True)
-    top_value = value_bets[:5]
+    top = value_bets[:5]
 
-    msg = "🔥 VALUE BETS PRO\n\n"
+    msg = "🔥 VALUE BETS (HEDGE FUND MODE)\n\n"
 
-    for v in top_value:
-        side, home, away, e, odds = v
-        stake = max(0, e * BANK)
+    for v in top:
+        side, home, away, e, odds, stake = v
 
         msg += f"""⚽ {home} vs {away}
 ➡️ {side}
@@ -265,16 +308,24 @@ def scan():
             home, away, prob, side = f
             msg += f"""⚽ {home} vs {away}
 📊 Prob: {round(prob*100,1)}%
-➡️ {side}
 
 """
+
+    # =========================
+    # RANKING LIGAS
+    # =========================
+
+    msg += "\n🏆 LIGAS MÁS RENTABLES\n\n"
+
+    for k, v in sorted(league_stats.items(), key=lambda x: x[1], reverse=True)[:5]:
+        msg += f"Liga {k}: {v} picks\n"
 
     send(msg)
     print("SCAN OK")
 
 
 # =========================
-# ⏰ EJECUCIÓN 10:00 ESTABLE
+# ⏰ 10:00 LOOP
 # =========================
 
 def wait_until_10():
@@ -282,7 +333,6 @@ def wait_until_10():
     while True:
 
         now = datetime.now()
-
         target = now.replace(hour=10, minute=0, second=0, microsecond=0)
 
         if now > target:
@@ -290,7 +340,7 @@ def wait_until_10():
 
         wait = (target - now).total_seconds()
 
-        print(f"⏳ Próxima ejecución en {int(wait)} segundos")
+        print(f"⏳ Esperando {int(wait)} segundos")
 
         time.sleep(wait)
 
@@ -301,7 +351,7 @@ def wait_until_10():
 # 🚀 START
 # =========================
 
-print("🔥 BOT PRO ESTABLE INICIADO")
-send("🔥 Bot PRO activo - 10:00 + value + favoritos")
+print("🔥 HEDGE FUND BOT INICIADO")
+send("🔥 Hedge Fund Bot activo")
 
 wait_until_10()
