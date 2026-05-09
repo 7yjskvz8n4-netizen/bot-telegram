@@ -1,6 +1,7 @@
 import requests
-import time
 import math
+import time
+from datetime import datetime, timedelta
 
 # =========================
 # 🔑 CONFIG
@@ -11,12 +12,19 @@ CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 1000
-
-LEAGUE_POOL = [39, 140, 135, 78, 61]  # EPL, LaLiga, Serie A, Bundesliga, Ligue 1
+MIN_ODDS = 1.65
 
 BASE_URL = "https://v3.football.api-sports.io"
 
-MIN_ODDS = 1.65
+
+# =========================
+# 🏆 LIGAS TOP + SEGUNDAS
+# =========================
+
+LEAGUES = [
+    39, 140, 135, 78, 61,   # top 5
+    40, 141, 1352, 79       # segundas
+]
 
 
 # =========================
@@ -29,8 +37,8 @@ def send(msg):
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg}
         )
-    except Exception as e:
-        print("Telegram error:", e)
+    except:
+        print("Telegram error")
 
 
 # =========================
@@ -61,13 +69,12 @@ def match_probs(home_xg, away_xg):
 
 
 # =========================
-# 📊 FORMA SIMPLE
+# 📊 FORMA
 # =========================
 
 def team_form(team_id):
 
     try:
-
         url = f"{BASE_URL}/fixtures"
         headers = {"x-apisports-key": API_KEY}
         params = {"team": team_id, "last": 5}
@@ -88,7 +95,7 @@ def team_form(team_id):
 
 
 # =========================
-# 💰 ODDS REALES
+# 💰 ODDS
 # =========================
 
 def get_odds(fixture_id):
@@ -98,23 +105,18 @@ def get_odds(fixture_id):
     params = {"fixture": fixture_id}
 
     try:
-
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
 
         best = {"Home": None, "Away": None}
 
         for item in data:
-
             for b in item.get("bookmakers", []):
-
                 for bet in b.get("bets", []):
-
                     if bet.get("name") != "Match Winner":
                         continue
 
                     for v in bet.get("values", []):
-
                         try:
                             odd = float(v["odd"])
 
@@ -125,7 +127,6 @@ def get_odds(fixture_id):
                             if v["value"] == "Away":
                                 if not best["Away"] or odd > best["Away"]:
                                     best["Away"] = odd
-
                         except:
                             continue
 
@@ -140,39 +141,31 @@ def get_odds(fixture_id):
 # =========================
 
 def edge(prob, odds):
-
-    if not odds:
-        return -999
-
     return prob - (1 / odds)
 
 
 # =========================
-# 🔍 SCAN
+# 🔍 SCAN JORNADA
 # =========================
 
 def scan():
 
-    print("🔍 SCAN ACTIVO")
-    send("🔍 BOT ONLINE")
+    print("🔍 SCAN 10:00 INICIADO")
+    send("🔍 Analizando jornada (10:00)")
 
     url = f"{BASE_URL}/fixtures"
     headers = {"x-apisports-key": API_KEY}
     params = {"season": 2025}
 
-    try:
-        r = requests.get(url, headers=headers, params=params)
-    except Exception as e:
-        print("REQUEST ERROR:", e)
-        return
+    r = requests.get(url, headers=headers, params=params)
 
     if r.status_code != 200:
-        send(f"❌ API ERROR {r.status_code}")
+        send("❌ API ERROR")
         return
 
     data = r.json().get("response", [])
 
-    candidates = []
+    picks = []
 
     for m in data:
 
@@ -180,7 +173,7 @@ def scan():
 
             league = m["league"]["id"]
 
-            if league not in LEAGUE_POOL:
+            if league not in LEAGUES:
                 continue
 
             if m["goals"]["home"] is not None:
@@ -188,10 +181,6 @@ def scan():
 
             home = m["teams"]["home"]["name"]
             away = m["teams"]["away"]["name"]
-
-            # =========================
-            # MODELO
-            # =========================
 
             home_form = team_form(m["teams"]["home"]["id"])
             away_form = team_form(m["teams"]["away"]["id"])
@@ -204,51 +193,37 @@ def scan():
             home_p = (home_p * 0.9) + 0.05
             away_p = (away_p * 0.9) + 0.05
 
-            # =========================
-            # ODDS
-            # =========================
-
             home_odds, away_odds = get_odds(m["fixture"]["id"])
 
             if not home_odds or not away_odds:
                 continue
 
-            # =========================
-            # FILTRO CUOTA
-            # =========================
-
             if home_odds >= MIN_ODDS:
                 e = edge(home_p, home_odds)
                 if e > 0:
-                    candidates.append(("HOME", home, away, e, home_odds))
+                    picks.append(("HOME", home, away, e, home_odds))
 
             if away_odds >= MIN_ODDS:
                 e = edge(away_p, away_odds)
                 if e > 0:
-                    candidates.append(("AWAY", home, away, e, away_odds))
+                    picks.append(("AWAY", home, away, e, away_odds))
 
-        except Exception as e:
-            print("MATCH ERROR:", e)
+        except:
             continue
 
-    # =========================
-    # RESULTADOS
-    # =========================
+    picks.sort(key=lambda x: x[3], reverse=True)
 
-    candidates.sort(key=lambda x: x[3], reverse=True)
-
-    top = candidates[:5]
+    top = picks[:5]
 
     if not top:
-        send("⚠️ Sin value bets este ciclo")
-        print("SIN BETS")
+        send("⚠️ Sin value bets hoy")
         return
 
-    msg = "🔥 VALUE BETS (>=1.65)\n\n"
+    msg = "🔥 VALUE BETS 10:00 (TOP + SEGUNDAS)\n\n"
 
-    for b in top:
+    for p in top:
 
-        side, home, away, e, odds = b
+        side, home, away, e, odds = p
 
         stake = max(0, e * BANK)
 
@@ -265,18 +240,34 @@ def scan():
 
 
 # =========================
-# 🔁 LOOP 6H
+# ⏰ EJECUCIÓN A LAS 10:00
 # =========================
 
-print("🔥 BOT INICIADO")
-send("🔥 BOT ONLINE")
+def wait_until_10():
 
-while True:
+    while True:
 
-    try:
+        now = datetime.now()
+
+        target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+
+        if now > target:
+            target += timedelta(days=1)
+
+        wait = (target - now).total_seconds()
+
+        print(f"⏳ Esperando {int(wait)} segundos hasta las 10:00")
+
+        time.sleep(wait)
+
         scan()
-        time.sleep(21600)  # 6 horas
 
-    except Exception as e:
-        print("FATAL ERROR:", e)
-        time.sleep(60)
+
+# =========================
+# 🚀 START
+# =========================
+
+print("🔥 BOT 10:00 INICIADO")
+send("🔥 BOT ONLINE - picks a las 10:00")
+
+wait_until_10()
