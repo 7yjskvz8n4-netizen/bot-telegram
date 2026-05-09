@@ -335,12 +335,12 @@ def wait_until_10():
         now = datetime.now()
         target = now.replace(hour=10, minute=0, second=0, microsecond=0)
 
-        if now > target:
+        if now >= target:
             target += timedelta(days=1)
 
         wait = (target - now).total_seconds()
 
-        print(f"⏳ Esperando {int(wait)} segundos")
+        print(f"⏳ Esperando {int(wait)} segundos hasta 10:00 AM ")
 
         time.sleep(wait)
 
