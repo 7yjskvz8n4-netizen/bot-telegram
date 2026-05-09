@@ -328,7 +328,7 @@ def scan():
 # ⏰ 10:00 LOOP
 # =========================
 
-def wait_until_10():
+def wait_until_8():
 
     while True:
 
@@ -340,9 +340,9 @@ def wait_until_10():
 
         wait = (target - now).total_seconds()
 
-        print(f"⏳ Esperando {int(wait)} segundos hasta 8:00 AM ")
+        print(f"⏳ Esperando {int(wait)} segundos  ")
 
-        time.sleep(wait)
+        time.sleep(61)
 
         scan()
 
@@ -354,4 +354,4 @@ def wait_until_10():
 print("🔥 HEDGE FUND BOT INICIADO")
 send("🔥 Hedge Fund Bot activo")
 
-wait_until_10()
+wait_until_8()
