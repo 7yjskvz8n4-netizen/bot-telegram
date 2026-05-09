@@ -328,7 +328,7 @@ def scan():
 # ⏰ 10:00 LOOP
 # =========================
 
-def wait_until_8():
+def wait_until_10():
 
     while True:
 
@@ -342,9 +342,11 @@ def wait_until_8():
 
         print(f"⏳ Esperando {int(wait)} segundos  ")
 
-        time.sleep(61)
+        time.sleep(wait)
 
         scan()
+
+        time.sleep(65)
 
 
 # =========================
