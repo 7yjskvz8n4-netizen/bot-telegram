@@ -14,7 +14,7 @@ API_KEY = "167721723854a65832f09abdeb92952b"
 
 BANK = 200
 KELLY_FACTOR = 0.25
-MIN_ODDS = 1.65
+MIN_ODDS = 1.50
 BASE_URL = "https://v3.football.api-sports.io"
 RESULTS_FILE = "results.json"
 
@@ -112,7 +112,7 @@ def scan():
             away_id = m["teams"]["away"]["id"]
             
             # Cálculo de xG basado en forma
-            home_xg = 1.1 + (team_form(home_id) * 0.6)
+            home_xg = 1.2 + (team_form(home_id) * 0.8) # Subimos de 0.6 a 0.8 para dar más peso al ataque
             away_xg = 1.0 + (team_form(away_id) * 0.6)
             
             h_p, d_p, a_p = match_probs(home_xg, away_xg)
@@ -141,13 +141,25 @@ if __name__ == "__main__":
     print("🚀 HEDGE FUND BOT ACTIVADO")
     send("🟢 <b>Bot Hedge Fund</b> iniciado correctamente. Escaneando cada 5 min.")
     
+    # Variable para controlar el aviso cada hora
+    last_heartbeat = time.time() 
+
     while True:
         try:
             scan()
+            
+            # --- LÓGICA DE "ESTOY VIVO" CADA HORA ---
+            current_time = time.time()
+            if current_time - last_heartbeat >= 3600:
+                send("🤖 <b>Reporte de estado:</b> El bot sigue activo y escaneando.")
+                last_heartbeat = current_time # Reiniciamos el contador de la hora
+            # ----------------------------------------
+
             # Espera 5 min + un poco de aleatoriedad
             wait_time = 300 + random.randint(-15, 15)
             print(f"⏳ Durmiendo {wait_time} segundos...")
             time.sleep(wait_time)
+            
         except KeyboardInterrupt:
             print("Stopping...")
             break
