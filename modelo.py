@@ -105,8 +105,15 @@ def get_odds(fixture_id):
     except:
         return 0, 0, 0
 
+import time
+
+# Contador global para los reportes
+ciclos_sin_valor = 0
+
 def scan():
-    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de 182 partidos...")
+    global ciclos_sin_valor
+    ahora = datetime.now().strftime('%H:%M:%S')
+    print(f"🔄 [{ahora}] Iniciando escaneo...")
     headers = {"x-apisports-key": API_KEY}
     fecha_hoy = datetime.now().strftime('%Y-%m-%d')
     
@@ -115,25 +122,22 @@ def scan():
         data = r.json().get("response", [])
         
         value_bets = []
-        count = 0
+        partidos_analizados = 0
         
         for m in data:
-            count += 1
-            # Solo analizamos ligas que conocemos para ir más rápido
-            # if m["league"]["id"] not in LEAGUES: continue 
+            if m["league"]["id"] not in LEAGUES: continue 
 
-            # Imprimimos progreso para que veas que NO está congelado
-            if count % 10 == 0:
-                print(f"⏳ Analizando partido {count} de {len(data)}...")
-
+            partidos_analizados += 1
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
-            h_p, d_p, a_p = match_probs(1.3, 1.1) # Cálculo base rápido
             
-            # Intentar obtener cuotas
+            # Cálculo de probabilidades (Poisson)
+            h_xg = 1.2 + (team_form(h_id) * 0.8)
+            a_xg = 1.0 + (team_form(a_id) * 0.6)
+            h_p, d_p, a_p = match_probs(h_xg, a_xg)
+            
             h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
             if h_o > 0:
-                # --- TU FILTRO DE GANAR A MENUDO ---
                 analisis = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
                 for prob, odd, label, icon in analisis:
                     if prob >= 0.55 and odd >= 1.40:
@@ -142,13 +146,19 @@ def scan():
                             value_bets.append(f"{icon} <b>{m['teams']['home']['name']}</b> | @{odd} | Prob: {round(prob*100)}%")
 
         if value_bets:
-            send("✅ <b>Picks detectados:</b>\n\n" + "\n\n".join(value_bets[:5]))
+            send(f"🔥 <b>VALOR DETECTADO</b>\n\n" + "\n\n".join(value_bets[:5]))
+            ciclos_sin_valor = 0 # Reiniciamos contador si hay acción
         else:
-            print("🏁 Escaneo finalizado. Sin oportunidades de valor ahora.")
+            ciclos_sin_valor += 1
+            print(f"🏁 Escaneo {ahora} completado. Sin valor.")
+            
+            # Solo enviamos reporte a Telegram cada 1 hora (12 ciclos de 5 min)
+            if ciclos_sin_valor >= 12:
+                send(f"🛰️ <b>Reporte por Hora:</b> El bot sigue activo. Se han analizado {partidos_analizados} partidos en la última hora y el mercado está muy ajustado (sin valor claro).")
+                ciclos_sin_valor = 0
 
     except Exception as e:
-        print(f"❌ Error: {e}")
-
+        print(f"❌ Error en scan: {e}")
 # =========================
 # 🔍 SCAN (LÓGICA 360° AGRESIVA)
 # =========================
