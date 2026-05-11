@@ -106,7 +106,7 @@ def get_odds(fixture_id):
 # 🔍 SCAN (LÓGICA 360° AGRESIVA)
 # =========================
 def scan():
-    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Escaneando 1X2 + Probabilidades...")
+    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Escaneando (Filtro: Probabilidad > 60%)...")
     headers = {"x-apisports-key": API_KEY}
     params = {"season": 2025, "next": 50} 
     
@@ -120,15 +120,14 @@ def scan():
 
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
             
-            # Cálculo de xG basado en forma (Ajuste agresivo de 0.8)
+            # Cálculo de xG basado en forma
             h_xg = 1.2 + (team_form(h_id) * 0.8)
             a_xg = 1.0 + (team_form(a_id) * 0.6)
             h_p, d_p, a_p = match_probs(h_xg, a_xg)
             
-            # Obtener cuotas reales de la API (1, X, 2)
+            # Obtener cuotas reales
             h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
-            # Análisis de los 3 mercados
             analisis = [
                 (h_p, h_o, "HOME", "🏠"),
                 (d_p, d_o, "DRAW", "🤝"),
@@ -136,29 +135,29 @@ def scan():
             ]
 
             for prob, odd, label, icon in analisis:
-                if odd >= MIN_ODDS:
-                    edge = prob - (1/odd)
-                    # Filtro de ventaja reducido al 1% (Agresivo)
-                    if edge > 0.01: 
-                        stake = kelly(prob, odd) * BANK
-                        if stake > 0.5: # Mostramos casi todo lo que tenga valor
-                            prob_pct = round(prob * 100, 1)
-                            value_bets.append(
-                                f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
-                                f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
-                                f"📊 Probabilidad: <b>{prob_pct}%</b>\n"
-                                f"📈 Edge: {round(edge*100,2)}% | Stake: €{round(stake,2)}"
-                            )
+                # --- AQUÍ ESTÁ EL FILTRO DE "GANAR SEGUIDO" ---
+                if prob >= 0.60: # Solo analiza si el equipo tiene más del 60% de ganar
+                    if odd >= MIN_ODDS:
+                        edge = prob - (1/odd)
+                        if edge > 0.01: # Solo si hay ventaja
+                            # Usamos un Kelly un poco más alto para aprovechar el acierto
+                            stake = kelly(prob, odd) * BANK
+                            if stake > 1.0:
+                                prob_pct = round(prob * 100, 1)
+                                value_bets.append(
+                                    f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
+                                    f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
+                                    f"📊 Probabilidad: <b>{prob_pct}%</b>\n"
+                                    f"📈 Edge: {round(edge*100,2)}% | Stake: €{round(stake,2)}"
+                                )
 
         if value_bets:
-            # Enviar los picks encontrados (máximo 5 por mensaje)
-            send("🔥 <b>VALOR DETECTADO (1X2)</b>\n\n" + "\n\n".join(value_bets[:5]))
+            send("🔥 <b>VALOR DETECTADO (>60% Prob)</b>\n\n" + "\n\n".join(value_bets[:5]))
         else:
-            print("Mercado analizado: Sin desajustes detectados.")
+            print("Escaneo finalizado: No hay favoritos sólidos con valor.")
 
     except Exception as e:
         print(f"❌ Error en scan: {e}")
-
 # =========================
 # 🚀 LOOP DE EJECUCIÓN
 # =========================
