@@ -1,33 +1,42 @@
-import requests
 import math
+import requests
 import time
-import json
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # =========================
-# 🔑 CONFIG (RELLENA ESTO)
+# ⚙️ CONFIGURACIÓN AGRESIVA
 # =========================
+# RECUERDA COMPLETAR TUS KEYS
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 API_KEY = "167721723854a65832f09abdeb92952b"
 
-BANK = 200
-KELLY_FACTOR = 0.25
-MIN_ODDS = 1.50
+BANK = 100          # Capital total para apuestas
+KELLY_FACTOR = 0.50      # Más agresivo (Medio Kelly)
+MIN_ODDS = 1.40         # Bajamos el umbral para detectar más picks
 BASE_URL = "https://v3.football.api-sports.io"
-RESULTS_FILE = "results.json"
 
-# LIGAS
-LEAGUES = [39, 140, 135, 78, 61, 40, 141, 1352, 79]
+# LIGAS AMPLIADAS (Incluye las principales europeas y secundarias para más volumen)
+LEAGUES = [
+    39, 40, 41,     # Premier League, Championship, League One
+    140, 141,       # LaLiga, Segunda División
+    135, 136,       # Serie A, Serie B
+    78, 79,         # Bundesliga, 2. Bundesliga
+    61, 62,         # Ligue 1, Ligue 2
+    88, 94,         # Eredivisie, Primeira Liga (Portugal)
+    71, 13,         # Serie A Brasil, Primera División Argentina
+    253,            # MLS
+    2, 3            # Champions League, Europa League
+]
 
 # =========================
-# 📩 TELEGRAM (REAL)
+# 📩 TELEGRAM (REPORTES)
 # =========================
 def send(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": 'HTML'})
         print(f"📡 Telegram enviado")
     except Exception as e:
         print(f"❌ Telegram error: {e}")
@@ -40,8 +49,8 @@ def poisson(k, lam):
 
 def match_probs(home_xg, away_xg):
     home = draw = away = 0
-    for i in range(6):
-        for j in range(6):
+    for i in range(7): # Aumentado a 7 para mayor precisión en goleadas
+        for j in range(7):
             p = poisson(i, home_xg) * poisson(j, away_xg)
             if i > j: home += p
             elif i == j: draw += p
@@ -49,6 +58,7 @@ def match_probs(home_xg, away_xg):
     return home, draw, away
 
 def kelly(prob, odds):
+    if odds <= 1: return 0
     b = odds - 1
     q = 1 - prob
     f = (prob * b - q) / b
@@ -64,10 +74,11 @@ def team_form(team_id):
         params = {"team": team_id, "last": 5}
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
+        if not data: return 1.0
         goals = sum((m["goals"]["home"] or 0) + (m["goals"]["away"] or 0) for m in data)
         return goals / 10
     except:
-        return 1
+        return 1.0
 
 def get_odds(fixture_id):
     url = f"{BASE_URL}/odds"
@@ -76,75 +87,74 @@ def get_odds(fixture_id):
     try:
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
-        best_home = 0
-        best_away = 0
+        best_home = best_draw = best_away = 0
+        
         for item in data:
             for b in item.get("bookmakers", []):
                 for bet in b.get("bets", []):
                     if bet.get("name") == "Match Winner":
                         for v in bet.get("values", []):
-                            if v["value"] == "Home": best_home = max(best_home, float(v["odd"]))
-                            if v["value"] == "Away": best_away = max(best_away, float(v["odd"]))
-        return best_home, best_away
+                            val = float(v["odd"])
+                            if v["value"] == "Home": best_home = max(best_home, val)
+                            if v["value"] == "Draw": best_draw = max(best_draw, val)
+                            if v["value"] == "Away": best_away = max(best_away, val)
+        return best_home, best_draw, best_away
     except:
-        return 0, 0
+        return 0, 0, 0
 
 # =========================
-# 🔍 SCAN (LÓGICA PRINCIPAL)
+# 🔍 SCAN (LÓGICA 360° AGRESIVA)
 # =========================
 def scan():
-    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de mercado completo (1X2)...")
-    
+    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Escaneando 1X2 + Probabilidades...")
     headers = {"x-apisports-key": API_KEY}
     params = {"season": 2025, "next": 50} 
     
     try:
         r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params)
         data = r.json().get("response", [])
-        
         value_bets = []
         
         for m in data:
-            league = m["league"]["id"]
-            if league not in LEAGUES: continue
+            if m["league"]["id"] not in LEAGUES: continue
 
-            home_id = m["teams"]["home"]["id"]
-            away_id = m["teams"]["away"]["id"]
+            h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
             
-            # Cálculo de xG basado en forma (Usando tu mejora de 0.8)
-            home_xg = 1.2 + (team_form(home_id) * 0.8)
-            away_xg = 1.0 + (team_form(away_id) * 0.6)
+            # Cálculo de xG basado en forma (Ajuste agresivo de 0.8)
+            h_xg = 1.2 + (team_form(h_id) * 0.8)
+            a_xg = 1.0 + (team_form(a_id) * 0.6)
+            h_p, d_p, a_p = match_probs(h_xg, a_xg)
             
-            # Obtenemos probabilidades para Local, Empate y Visitante
-            h_p, d_p, a_p = match_probs(home_xg, away_xg)
+            # Obtener cuotas reales de la API (1, X, 2)
+            h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
-            # Obtenemos las mejores cuotas de la API
-            # Nota: Para el empate necesitarías modificar get_odds, 
-            # pero por ahora usemos las de Local y Visitante que ya tienes.
-            h_odds, a_odds = get_odds(m["fixture"]["id"])
-            
-            # --- ANALIZAR VICTORIA LOCAL (HOME) ---
-            if h_odds >= MIN_ODDS:
-                edge_h = h_p - (1/h_odds)
-                if edge_h > 0.02: # Filtro de 2% de ventaja mínima
-                    stake = kelly(h_p, h_odds) * BANK
-                    if stake > 1: # Solo si sugiere apostar más de 1€
-                        value_bets.append(f"🏠 <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n➡️ Lado: <b>HOME</b> | Cuota: {h_odds}\n📈 Edge: {round(edge_h*100,2)}% | Stake: €{round(stake,2)}")
+            # Análisis de los 3 mercados
+            analisis = [
+                (h_p, h_o, "HOME", "🏠"),
+                (d_p, d_o, "DRAW", "🤝"),
+                (a_p, a_o, "AWAY", "🚀")
+            ]
 
-            # --- ANALIZAR VICTORIA VISITANTE (AWAY) ---
-            if a_odds >= MIN_ODDS:
-                edge_a = a_p - (1/a_odds)
-                if edge_a > 0.02:
-                    stake = kelly(a_p, a_odds) * BANK
-                    if stake > 1:
-                        value_bets.append(f"🚀 {m['teams']['home']['name']} vs <b>{m['teams']['away']['name']}</b>\n➡️ Lado: <b>AWAY</b> | Cuota: {a_odds}\n📈 Edge: {round(edge_a*100,2)}% | Stake: €{round(stake,2)}")
+            for prob, odd, label, icon in analisis:
+                if odd >= MIN_ODDS:
+                    edge = prob - (1/odd)
+                    # Filtro de ventaja reducido al 1% (Agresivo)
+                    if edge > 0.01: 
+                        stake = kelly(prob, odd) * BANK
+                        if stake > 0.5: # Mostramos casi todo lo que tenga valor
+                            prob_pct = round(prob * 100, 1)
+                            value_bets.append(
+                                f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
+                                f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
+                                f"📊 Probabilidad: <b>{prob_pct}%</b>\n"
+                                f"📈 Edge: {round(edge*100,2)}% | Stake: €{round(stake,2)}"
+                            )
 
         if value_bets:
-            # Enviamos las mejores 5 oportunidades encontradas
-            full_msg = "🔥 <b>OPORTUNIDADES DE VALOR ENCONTRADAS</b>\n\n" + "\n\n".join(value_bets[:5])
-            send(full_msg)
+            # Enviar los picks encontrados (máximo 5 por mensaje)
+            send("🔥 <b>VALOR DETECTADO (1X2)</b>\n\n" + "\n\n".join(value_bets[:5]))
         else:
-            print("No se encontraron desajustes de cuotas en este escaneo.")
+            print("Mercado analizado: Sin desajustes detectados.")
 
     except Exception as e:
         print(f"❌ Error en scan: {e}")
@@ -152,32 +162,30 @@ def scan():
 # =========================
 # 🚀 LOOP DE EJECUCIÓN
 # =========================
-if __name__ == "__main__":
-    print("🚀 HEDGE FUND BOT ACTIVADO")
-    send("🟢 <b>Bot Hedge Fund</b> iniciado correctamente. Escaneando cada 5 min.")
+if __name__ == '__main__':
+    print("🚀 HEDGE FUND BOT ACTIVADO - MODO AGRESIVO")
+    send("🟢 <b>Bot Hedge Fund</b> iniciado correctamente.\n✅ Modo: Agresivo (1X2)\n⏱️ Escaneo: Cada 5 min.")
     
-    # Variable para controlar el aviso cada hora
     last_heartbeat = time.time() 
 
     while True:
         try:
             scan()
             
-            # --- LÓGICA DE "ESTOY VIVO" CADA HORA ---
+            # Reporte de estado cada hora
             current_time = time.time()
             if current_time - last_heartbeat >= 3600:
-                send("🤖 <b>Reporte de estado:</b> El bot sigue activo y escaneando.")
-                last_heartbeat = current_time # Reiniciamos el contador de la hora
-            # ----------------------------------------
+                send("🤖 <b>Reporte de estado:</b> El bot sigue activo y rastreando valor.")
+                last_heartbeat = current_time 
 
-            # Espera 5 min + un poco de aleatoriedad
+            # Espera 5 min + pequeña variación
             wait_time = 300 + random.randint(-15, 15)
             print(f"⏳ Durmiendo {wait_time} segundos...")
             time.sleep(wait_time)
             
         except KeyboardInterrupt:
-            print("Stopping...")
+            print("Deteniendo bot...")
             break
         except Exception as e:
-            print(f"Falló el loop: {e}")
+            print(f"Error en loop principal: {e}")
             time.sleep(60)
