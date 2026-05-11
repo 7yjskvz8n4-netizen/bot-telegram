@@ -93,10 +93,10 @@ def get_odds(fixture_id):
 # 🔍 SCAN (LÓGICA PRINCIPAL)
 # =========================
 def scan():
-    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de mercado...")
+    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de mercado completo (1X2)...")
     
     headers = {"x-apisports-key": API_KEY}
-    params = {"season": 2025, "next": 50} # Ajustado para buscar próximos partidos
+    params = {"season": 2025, "next": 50} 
     
     try:
         r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params)
@@ -111,25 +111,40 @@ def scan():
             home_id = m["teams"]["home"]["id"]
             away_id = m["teams"]["away"]["id"]
             
-            # Cálculo de xG basado en forma
-            home_xg = 1.2 + (team_form(home_id) * 0.8) # Subimos de 0.6 a 0.8 para dar más peso al ataque
+            # Cálculo de xG basado en forma (Usando tu mejora de 0.8)
+            home_xg = 1.2 + (team_form(home_id) * 0.8)
             away_xg = 1.0 + (team_form(away_id) * 0.6)
             
+            # Obtenemos probabilidades para Local, Empate y Visitante
             h_p, d_p, a_p = match_probs(home_xg, away_xg)
+            
+            # Obtenemos las mejores cuotas de la API
+            # Nota: Para el empate necesitarías modificar get_odds, 
+            # pero por ahora usemos las de Local y Visitante que ya tienes.
             h_odds, a_odds = get_odds(m["fixture"]["id"])
             
-            # Analizar Home
+            # --- ANALIZAR VICTORIA LOCAL (HOME) ---
             if h_odds >= MIN_ODDS:
-                edge = h_p - (1/h_odds)
-                if edge > 0:
+                edge_h = h_p - (1/h_odds)
+                if edge_h > 0.02: # Filtro de 2% de ventaja mínima
                     stake = kelly(h_p, h_odds) * BANK
-                    value_bets.append(f"⚽ <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n➡️ Lado: HOME | Cuota: {h_odds}\n📈 Edge: {round(edge,3)} | Stake: €{round(stake,2)}")
+                    if stake > 1: # Solo si sugiere apostar más de 1€
+                        value_bets.append(f"🏠 <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n➡️ Lado: <b>HOME</b> | Cuota: {h_odds}\n📈 Edge: {round(edge_h*100,2)}% | Stake: €{round(stake,2)}")
+
+            # --- ANALIZAR VICTORIA VISITANTE (AWAY) ---
+            if a_odds >= MIN_ODDS:
+                edge_a = a_p - (1/a_odds)
+                if edge_a > 0.02:
+                    stake = kelly(a_p, a_odds) * BANK
+                    if stake > 1:
+                        value_bets.append(f"🚀 {m['teams']['home']['name']} vs <b>{m['teams']['away']['name']}</b>\n➡️ Lado: <b>AWAY</b> | Cuota: {a_odds}\n📈 Edge: {round(edge_a*100,2)}% | Stake: €{round(stake,2)}")
 
         if value_bets:
-            full_msg = "🔥 <b>VALUE BETS ENCONTRADAS</b>\n\n" + "\n\n".join(value_bets[:5])
+            # Enviamos las mejores 5 oportunidades encontradas
+            full_msg = "🔥 <b>OPORTUNIDADES DE VALOR ENCONTRADAS</b>\n\n" + "\n\n".join(value_bets[:5])
             send(full_msg)
         else:
-            print("No se encontraron apuestas con valor en este ciclo.")
+            print("No se encontraron desajustes de cuotas en este escaneo.")
 
     except Exception as e:
         print(f"❌ Error en scan: {e}")
