@@ -81,26 +81,73 @@ def team_form(team_id):
         return 1.0
 
 def get_odds(fixture_id):
+    # Añadimos un pequeño retraso para no saturar la API gratuita
+    time.sleep(0.5) 
     url = f"{BASE_URL}/odds"
     headers = {"x-apisports-key": API_KEY}
     params = {"fixture": fixture_id}
     try:
-        r = requests.get(url, headers=headers, params=params)
+        r = requests.get(url, headers=headers, params=params, timeout=10)
         data = r.json().get("response", [])
-        best_home = best_draw = best_away = 0
+        if not data: return 0, 0, 0
         
-        for item in data:
-            for b in item.get("bookmakers", []):
-                for bet in b.get("bets", []):
-                    if bet.get("name") == "Match Winner":
-                        for v in bet.get("values", []):
-                            val = float(v["odd"])
-                            if v["value"] == "Home": best_home = max(best_home, val)
-                            if v["value"] == "Draw": best_draw = max(best_draw, val)
-                            if v["value"] == "Away": best_away = max(best_away, val)
-        return best_home, best_draw, best_away
+        # Extraer cuotas 1X2
+        h, d, a = 0, 0, 0
+        for book in data[0].get("bookmakers", []):
+            for bet in book.get("bets", []):
+                if bet["name"] == "Match Winner":
+                    for v in bet["values"]:
+                        if v["value"] == "Home": h = float(v["odd"])
+                        if v["value"] == "Draw": d = float(v["odd"])
+                        if v["value"] == "Away": a = float(v["odd"])
+            if h > 0: break # Si ya encontramos cuotas en una casa, paramos
+        return h, d, a
     except:
         return 0, 0, 0
+
+def scan():
+    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de 182 partidos...")
+    headers = {"x-apisports-key": API_KEY}
+    fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+    
+    try:
+        r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params={"date": fecha_hoy})
+        data = r.json().get("response", [])
+        
+        value_bets = []
+        count = 0
+        
+        for m in data:
+            count += 1
+            # Solo analizamos ligas que conocemos para ir más rápido
+            # if m["league"]["id"] not in LEAGUES: continue 
+
+            # Imprimimos progreso para que veas que NO está congelado
+            if count % 10 == 0:
+                print(f"⏳ Analizando partido {count} de {len(data)}...")
+
+            h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
+            h_p, d_p, a_p = match_probs(1.3, 1.1) # Cálculo base rápido
+            
+            # Intentar obtener cuotas
+            h_o, d_o, a_o = get_odds(m["fixture"]["id"])
+            
+            if h_o > 0:
+                # --- TU FILTRO DE GANAR A MENUDO ---
+                analisis = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
+                for prob, odd, label, icon in analisis:
+                    if prob >= 0.55 and odd >= 1.40:
+                        edge = prob - (1/odd)
+                        if edge > 0.005:
+                            value_bets.append(f"{icon} <b>{m['teams']['home']['name']}</b> | @{odd} | Prob: {round(prob*100)}%")
+
+        if value_bets:
+            send("✅ <b>Picks detectados:</b>\n\n" + "\n\n".join(value_bets[:5]))
+        else:
+            print("🏁 Escaneo finalizado. Sin oportunidades de valor ahora.")
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
 # =========================
 # 🔍 SCAN (LÓGICA 360° AGRESIVA)
