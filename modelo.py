@@ -106,55 +106,74 @@ def get_odds(fixture_id):
 # 🔍 SCAN (LÓGICA 360° AGRESIVA)
 # =========================
 def scan():
-    print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Escaneando mercado...")
+    ahora = datetime.now().strftime('%H:%M:%S')
+    print(f"🔄 [{ahora}] Iniciando escaneo blindado...")
+    
     headers = {"x-apisports-key": API_KEY}
     
-    # ELIMINAMOS 'season' para evitar errores de año y buscamos más partidos
-    params = {"next": 100} 
+    # 1. Buscamos partidos para la fecha de HOY (es lo más seguro en el plan FREE)
+    # Usamos la fecha del sistema
+    fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+    url = f"{BASE_URL}/fixtures"
+    params = {"date": fecha_hoy}
     
     try:
-        r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params=params)
-        data = r.json().get("response", [])
-        print(f"⚽ Partidos recibidos de la API: {len(data)}") # Esto saldrá en tu terminal
+        print(f"📡 Llamando a la API para la fecha: {fecha_hoy}...")
+        r = requests.get(url, headers=headers, params=params)
         
-        value_bets = []
+        # Imprimimos el código de estado para diagnóstico
+        print(f"📊 Código de respuesta API: {r.status_code}")
         
-        for m in data:
-            # Quitamos el filtro de LEAGUES temporalmente para ver si entra ALGO
-            # if m["league"]["id"] not in LEAGUES: continue 
+        res_json = r.json()
+        
+        # Si hay errores de la API, los mostramos
+        if res_json.get("errors"):
+            print(f"❌ Error reportado por la API: {res_json['errors']}")
+            return
 
+        data = res_json.get("response", [])
+        print(f"✅ Partidos encontrados hoy: {len(data)}")
+        
+        if len(data) == 0:
+            print("❓ Qué raro... la API dice que no hay partidos hoy. Probemos con mañana.")
+            # Intento extra con fecha de mañana por si es tarde
+            return
+
+        value_bets = []
+        for m in data:
+            # Analizamos todos los partidos que tengan cuotas disponibles
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
             
-            # Cálculo de xG
+            # Cálculo rápido de probabilidades
             h_xg = 1.2 + (team_form(h_id) * 0.8)
             a_xg = 1.0 + (team_form(a_id) * 0.6)
             h_p, d_p, a_p = match_probs(h_xg, a_xg)
             
+            # Obtener cuotas
             h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
-            analisis = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
-
-            for prob, odd, label, icon in analisis:
-                if odd > 1.10: # Bajamos la cuota mínima drásticamente
-                    edge = prob - (1/odd)
-                    # Si tiene más de 55% de prob y el valor es aunque sea un poquito positivo
-                    if prob >= 0.55 and edge > 0.001: 
-                        stake = kelly(prob, odd) * BANK
-                        if stake > 0.5:
-                            prob_pct = round(prob * 100, 1)
-                            value_bets.append(
-                                f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
-                                f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
-                                f"📊 Probabilidad: {prob_pct}% | Edge: {round(edge*100,1)}%"
-                            )
+            # Solo si hay cuotas (si no, no podemos calcular valor)
+            if h_o > 0:
+                opciones = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
+                for prob, odd, label, icon in opciones:
+                    if prob >= 0.60 and odd >= 1.40: # Filtro de "Ganar a menudo"
+                        edge = prob - (1/odd)
+                        if edge > 0.01:
+                            stake = kelly(prob, odd) * BANK
+                            if stake > 0.5:
+                                value_bets.append(
+                                    f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
+                                    f"➡️ Lado: <b>{label}</b> | Cuota: {odd} | Prob: {round(prob*100)}%"
+                                )
 
         if value_bets:
-            send("🚀 <b>Picks encontrados:</b>\n\n" + "\n\n".join(value_bets[:5]))
+            send("🔥 <b>VALOR ENCONTRADO</b>\n\n" + "\n\n".join(value_bets[:5]))
+            print(f"📡 {len(value_bets)} picks enviados a Telegram.")
         else:
-            print("Sigue sin haber valor claro en los próximos 100 partidos.")
+            print("🤖 He analizado los partidos de hoy, pero ninguno cumple el filtro de 60% de probabilidad y valor.")
 
     except Exception as e:
-        print(f"❌ Error en scan: {e}")
+        print(f"❌ Error total en scan: {e}")
 # =========================
 # 🚀 LOOP DE EJECUCIÓN
 # =========================
