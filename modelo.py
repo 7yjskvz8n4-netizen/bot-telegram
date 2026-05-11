@@ -1,55 +1,57 @@
-import math
 import requests
+import math
 import time
-import random
 from datetime import datetime
+import random
 
 # =========================
-# ⚙️ CONFIGURACIÓN AGRESIVA
+# ⚙️ CONFIGURACIÓN
 # =========================
-# RECUERDA COMPLETAR TUS KEYS
+API_KEY = "167721723854a65832f09abdeb92952b"
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
-API_KEY = "167721723854a65832f09abdeb92952b"
 
-BANK = 100          # Capital total para apuestas
-KELLY_FACTOR = 0.50      # Más agresivo (Medio Kelly)
-MIN_ODDS = 1.40         # Bajamos el umbral para detectar más picks
+BANK = 100                  # Capital total
+KELLY_FACTOR = 0.50         # Medio Kelly (Equilibrio riesgo/beneficio)
+MIN_ODDS = 1.40             # Cuota mínima para apostar
 BASE_URL = "https://v3.football.api-sports.io"
 
-# LIGAS AMPLIADAS (Incluye las principales europeas y secundarias para más volumen)
+# LIGAS RESTAURADAS
 LEAGUES = [
     39, 40, 41,     # Premier League, Championship, League One
     140, 141,       # LaLiga, Segunda División
     135, 136,       # Serie A, Serie B
     78, 79,         # Bundesliga, 2. Bundesliga
     61, 62,         # Ligue 1, Ligue 2
-    88, 94,         # Eredivisie, Primeira Liga (Portugal)
+    88, 94,         # Eredivisie, Primeira Liga
     71, 13,         # Serie A Brasil, Primera División Argentina
     253,            # MLS
     2, 3            # Champions League, Europa League
 ]
 
+# Variable global para el reporte por hora
+ciclos_sin_valor = 0
+
 # =========================
-# 📩 TELEGRAM (REPORTES)
+# 📩 TELEGRAM
 # =========================
 def send(msg):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": 'HTML'})
-        print(f"📡 Telegram enviado")
+        print(f"📡 Mensaje enviado a Telegram")
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
+        print(f"❌ Error enviando a Telegram: {e}")
 
 # =========================
-# ⚽ MATEMÁTICAS (POISSON & KELLY)
+# ⚽ MATEMÁTICAS
 # =========================
 def poisson(k, lam):
     return (lam ** k * math.exp(-lam)) / math.factorial(k)
 
 def match_probs(home_xg, away_xg):
     home = draw = away = 0
-    for i in range(7): # Aumentado a 7 para mayor precisión en goleadas
+    for i in range(7):
         for j in range(7):
             p = poisson(i, home_xg) * poisson(j, away_xg)
             if i > j: home += p
@@ -72,17 +74,16 @@ def team_form(team_id):
         url = f"{BASE_URL}/fixtures"
         headers = {"x-apisports-key": API_KEY}
         params = {"team": team_id, "last": 5}
-        r = requests.get(url, headers=headers, params=params)
+        r = requests.get(url, headers=headers, params=params, timeout=10)
         data = r.json().get("response", [])
         if not data: return 1.0
         goals = sum((m["goals"]["home"] or 0) + (m["goals"]["away"] or 0) for m in data)
-        return goals / 10
+        return max(0.5, goals / 10) 
     except:
         return 1.0
 
 def get_odds(fixture_id):
-    # Añadimos un pequeño retraso para no saturar la API gratuita
-    time.sleep(0.5) 
+    time.sleep(0.4) # Evitar saturar la API
     url = f"{BASE_URL}/odds"
     headers = {"x-apisports-key": API_KEY}
     params = {"fixture": fixture_id}
@@ -91,7 +92,6 @@ def get_odds(fixture_id):
         data = r.json().get("response", [])
         if not data: return 0, 0, 0
         
-        # Extraer cuotas 1X2
         h, d, a = 0, 0, 0
         for book in data[0].get("bookmakers", []):
             for bet in book.get("bets", []):
@@ -100,20 +100,19 @@ def get_odds(fixture_id):
                         if v["value"] == "Home": h = float(v["odd"])
                         if v["value"] == "Draw": d = float(v["odd"])
                         if v["value"] == "Away": a = float(v["odd"])
-            if h > 0: break # Si ya encontramos cuotas en una casa, paramos
+            if h > 0: break
         return h, d, a
     except:
         return 0, 0, 0
 
-import time
-
-# Contador global para los reportes
-ciclos_sin_valor = 0
-
+# =========================
+# 🔍 ESCANEO
+# =========================
 def scan():
     global ciclos_sin_valor
     ahora = datetime.now().strftime('%H:%M:%S')
-    print(f"🔄 [{ahora}] Iniciando escaneo...")
+    print(f"🔄 [{ahora}] Escaneando partidos...")
+    
     headers = {"x-apisports-key": API_KEY}
     fecha_hoy = datetime.now().strftime('%Y-%m-%d')
     
@@ -130,7 +129,7 @@ def scan():
             partidos_analizados += 1
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
             
-            # Cálculo de probabilidades (Poisson)
+            # Probabilidades Poisson + Estado de forma
             h_xg = 1.2 + (team_form(h_id) * 0.8)
             a_xg = 1.0 + (team_form(a_id) * 0.6)
             h_p, d_p, a_p = match_probs(h_xg, a_xg)
@@ -138,126 +137,49 @@ def scan():
             h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
             if h_o > 0:
-                analisis = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
-                for prob, odd, label, icon in analisis:
-                    if prob >= 0.55 and odd >= 1.40:
+                opciones = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
+                for prob, odd, label, icon in opciones:
+                    # Filtro: Ganar a menudo (55%+) y valor real
+                    if prob >= 0.55 and odd >= MIN_ODDS:
                         edge = prob - (1/odd)
                         if edge > 0.005:
-                            value_bets.append(f"{icon} <b>{m['teams']['home']['name']}</b> | @{odd} | Prob: {round(prob*100)}%")
+                            stake_final = kelly(prob, odd) * BANK
+                            if stake_final > 0.5:
+                                value_bets.append(
+                                    f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
+                                    f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
+                                    f"📊 Probabilidad: {round(prob*100, 1)}% | Stake: €{round(stake_final, 2)}"
+                                )
 
         if value_bets:
-            send(f"🔥 <b>VALOR DETECTADO</b>\n\n" + "\n\n".join(value_bets[:5]))
-            ciclos_sin_valor = 0 # Reiniciamos contador si hay acción
+            send("🔥 <b>VALOR DETECTADO</b>\n\n" + "\n\n".join(value_bets[:5]))
+            ciclos_sin_valor = 0 
         else:
             ciclos_sin_valor += 1
-            print(f"🏁 Escaneo {ahora} completado. Sin valor.")
+            print(f"🏁 Escaneo completado. {partidos_analizados} partidos revisados. Sin valor.")
             
-            # Solo enviamos reporte a Telegram cada 1 hora (12 ciclos de 5 min)
+            # Reporte por hora (12 ciclos de 5 min)
             if ciclos_sin_valor >= 12:
-                send(f"🛰️ <b>Reporte por Hora:</b> El bot sigue activo. Se han analizado {partidos_analizados} partidos en la última hora y el mercado está muy ajustado (sin valor claro).")
+                send(f"🛰️ <b>Reporte por Hora:</b> El bot sigue activo.\nAnallizados {partidos_analizados} partidos de tus ligas.\nEstado: Buscando errores en cuotas...")
                 ciclos_sin_valor = 0
 
     except Exception as e:
         print(f"❌ Error en scan: {e}")
+
 # =========================
-# 🔍 SCAN (LÓGICA 360° AGRESIVA)
-# =========================
-def scan():
-    ahora = datetime.now().strftime('%H:%M:%S')
-    print(f"🔄 [{ahora}] Iniciando escaneo blindado...")
-    
-    headers = {"x-apisports-key": API_KEY}
-    
-    # 1. Buscamos partidos para la fecha de HOY (es lo más seguro en el plan FREE)
-    # Usamos la fecha del sistema
-    fecha_hoy = datetime.now().strftime('%Y-%m-%d')
-    url = f"{BASE_URL}/fixtures"
-    params = {"date": fecha_hoy}
-    
-    try:
-        print(f"📡 Llamando a la API para la fecha: {fecha_hoy}...")
-        r = requests.get(url, headers=headers, params=params)
-        
-        # Imprimimos el código de estado para diagnóstico
-        print(f"📊 Código de respuesta API: {r.status_code}")
-        
-        res_json = r.json()
-        
-        # Si hay errores de la API, los mostramos
-        if res_json.get("errors"):
-            print(f"❌ Error reportado por la API: {res_json['errors']}")
-            return
-
-        data = res_json.get("response", [])
-        print(f"✅ Partidos encontrados hoy: {len(data)}")
-        
-        if len(data) == 0:
-            print("❓ Qué raro... la API dice que no hay partidos hoy. Probemos con mañana.")
-            # Intento extra con fecha de mañana por si es tarde
-            return
-
-        value_bets = []
-        for m in data:
-            # Analizamos todos los partidos que tengan cuotas disponibles
-            h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
-            
-            # Cálculo rápido de probabilidades
-            h_xg = 1.2 + (team_form(h_id) * 0.8)
-            a_xg = 1.0 + (team_form(a_id) * 0.6)
-            h_p, d_p, a_p = match_probs(h_xg, a_xg)
-            
-            # Obtener cuotas
-            h_o, d_o, a_o = get_odds(m["fixture"]["id"])
-            
-            # Solo si hay cuotas (si no, no podemos calcular valor)
-            if h_o > 0:
-                opciones = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
-                for prob, odd, label, icon in opciones:
-                    if prob >= 0.60 and odd >= 1.40: # Filtro de "Ganar a menudo"
-                        edge = prob - (1/odd)
-                        if edge > 0.01:
-                            stake = kelly(prob, odd) * BANK
-                            if stake > 0.5:
-                                value_bets.append(
-                                    f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
-                                    f"➡️ Lado: <b>{label}</b> | Cuota: {odd} | Prob: {round(prob*100)}%"
-                                )
-
-        if value_bets:
-            send("🔥 <b>VALOR ENCONTRADO</b>\n\n" + "\n\n".join(value_bets[:5]))
-            print(f"📡 {len(value_bets)} picks enviados a Telegram.")
-        else:
-            print("🤖 He analizado los partidos de hoy, pero ninguno cumple el filtro de 60% de probabilidad y valor.")
-
-    except Exception as e:
-        print(f"❌ Error total en scan: {e}")
-# =========================
-# 🚀 LOOP DE EJECUCIÓN
+# 🚀 EJECUCIÓN
 # =========================
 if __name__ == '__main__':
-    print("🚀 HEDGE FUND BOT ACTIVADO - MODO AGRESIVO")
-    send("🟢 <b>Bot Hedge Fund</b> iniciado correctamente.\n✅ Modo: Agresivo (1X2)\n⏱️ Escaneo: Cada 5 min.")
+    print("🚀 HEDGE FUND BOT ACTIVADO - MODO GANAR A MENUDO")
+    send("🟢 <b>Bot Hedge Fund</b> iniciado.\n✅ Modo: Probabilidad > 55%\n⏱️ Reporte: Cada 1 hora si no hay valor.")
     
-    last_heartbeat = time.time() 
-
     while True:
         try:
             scan()
-            
-            # Reporte de estado cada hora
-            current_time = time.time()
-            if current_time - last_heartbeat >= 3600:
-                send("🤖 <b>Reporte de estado:</b> El bot sigue activo y rastreando valor.")
-                last_heartbeat = current_time 
-
-            # Espera 5 min + pequeña variación
-            wait_time = 300 + random.randint(-15, 15)
-            print(f"⏳ Durmiendo {wait_time} segundos...")
-            time.sleep(wait_time)
-            
+            time.sleep(300) # 5 minutos entre escaneos
         except KeyboardInterrupt:
             print("Deteniendo bot...")
             break
         except Exception as e:
-            print(f"Error en loop principal: {e}")
+            print(f"Error en loop: {e}")
             time.sleep(60)
