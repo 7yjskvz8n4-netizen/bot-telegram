@@ -22,7 +22,10 @@ HORA_FIN = 22
 MINUTOS_ESPERA = 20  # <--- Esta es la que te faltaba
 
 LEAGUES = [
-    39, 40, 41, 140, 141, 135, 136, 78, 79, 61, 62, 88, 94, 71, 13, 253, 2, 3
+    39, 140, 135, 78, 61,  # Las 5 grandes (Premier, LaLiga, Serie A, Bundesliga, Ligue 1)
+    88, 94,                # Eredivisie y Portugal (Muy buenas para valor)
+    71, 13,                # Brasil y Argentina
+    2                      # Champions League
 ]
 
 ciclos_sin_valor = 0
