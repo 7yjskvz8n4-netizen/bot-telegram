@@ -13,7 +13,7 @@ CHAT_ID = "1335805552"
 
 BANK = 100                  
 KELLY_FACTOR = 0.50         
-MIN_ODDS = 1.40             
+MIN_ODDS = 1.45             
 BASE_URL = "https://v3.football.api-sports.io"
 
 # Variables de tiempo (Asegúrate de que estas tres estén aquí)
