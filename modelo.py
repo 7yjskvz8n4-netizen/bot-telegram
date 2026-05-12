@@ -110,19 +110,24 @@ def scan():
         print(f"💤 [{ahora_str}] Fuera de horario (13:00 - 22:00).")
         return
 
-    print(f"🔄 [{ahora_str}] Iniciando escaneo...")
+    print(f"🔄 [{ahora_str}] Iniciando escaneo transparente...")
     headers = {"x-apisports-key": API_KEY}
     fecha_hoy = ahora_dt.strftime('%Y-%m-%d')
     
     try:
         r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params={"date": fecha_hoy})
         data = r.json().get("response", [])
+        
         value_bets = []
-        partidos_analizados = 0
+        partidos_en_tus_ligas = [] # Nueva lista para seguimiento
         
         for m in data:
             if m["league"]["id"] not in LEAGUES: continue 
-            partidos_analizados += 1
+            
+            # Guardamos el nombre del encuentro para el reporte de terminal
+            match_name = f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
+            partidos_en_tus_ligas.append(match_name)
+            
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
             h_xg = 1.2 + (team_form(h_id) * 0.8)
             a_xg = 1.0 + (team_form(a_id) * 0.6)
@@ -138,19 +143,28 @@ def scan():
                             stake_final = kelly(prob, odd) * BANK
                             if stake_final > 0.5:
                                 value_bets.append(
-                                    f"{icon} <b>{m['teams']['home']['name']}</b> vs {m['teams']['away']['name']}\n"
+                                    f"{icon} <b>{match_name}</b>\n"
                                     f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
                                     f"📊 Prob: {round(prob*100, 1)}% | Stake: €{round(stake_final, 2)}"
                                 )
+
+        # --- REPORTE DETALLADO EN TERMINAL ---
+        if partidos_en_tus_ligas:
+            print(f"🏟️ Partidos analizados en tus ligas ({len(partidos_en_tus_ligas)}):")
+            for p in partidos_en_tus_ligas:
+                print(f"  - {p}")
+        else:
+            print("⚠️ No se encontraron partidos hoy para las ligas de tu lista.")
 
         if value_bets:
             send("🔥 <b>VALOR DETECTADO</b>\n\n" + "\n\n".join(value_bets[:5]))
             ciclos_sin_valor = 0 
         else:
             ciclos_sin_valor += 1
-            print(f"🏁 Escaneo completado. Sin valor.")
+            print(f"🏁 Escaneo completado. No se encontró ventaja matemática en estos encuentros.")
+            
             if ciclos_sin_valor >= 3:
-                send(f"🛰️ <b>Reporte:</b> El bot sigue activo rindiendo en horario oficial.")
+                send(f"🛰️ <b>Reporte:</b> El bot sigue activo. Analizados {len(partidos_en_tus_ligas)} encuentros en el último ciclo.")
                 ciclos_sin_valor = 0
 
     except Exception as e:
