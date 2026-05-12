@@ -153,32 +153,23 @@ def scan():
         print(f"❌ Error en scan: {e}")
 
 # =========================
-# 🚀 LOOP DE EJECUCIÓN (CON HORARIO)
+# 🚀 EJECUCIÓN
 # =========================
 if __name__ == '__main__':
-    print("🚀 BOT ACTIVADO - HORARIO 13:00 a 22:00")
-    send("🟢 <b>Bot Iniciado</b>\n⏰ Horario: 13:00 - 22:00\n⏱️ Frecuencia: 20 min.")
+    print(f"🚀 BOT HEDGE FUND ACTIVADO")
+    print(f"⏰ Horario: {HORA_INICIO}:00 a {HORA_FIN}:00")
+    print(f"⏱️ Frecuencia: Cada {MINUTOS_ESPERA} minutos")
+    
+    send(f"🟢 <b>Bot Iniciado</b>\n⏰ Horario: {HORA_INICIO}:00 - {HORA_FIN}:00\n⏱️ Escaneo: Cada {MINUTOS_ESPERA} min.")
     
     while True:
         try:
-            ahora = datetime.now()
-            # Comprobar si estamos dentro del horario
-            if HORA_INICIO <= ahora.hour < HORA_FIN:
-                scan()
-                wait_time = 1200 # 20 minutos
-            else:
-                print(f"💤 Fuera de horario ({ahora.strftime('%H:%M')}). Esperando a las 13:00...")
-                wait_time = 600 # Comprobar cada 10 min si ya es hora de empezar
-            
-            time.sleep(wait_time)
-            
+            scan()
+            # Espera 20 minutos (20 * 60 segundos)
+            time.sleep(MINUTOS_ESPERA * 60) 
         except KeyboardInterrupt:
-            print("Det```
-
-### ¿Qué haeniendo bot...")
+            print("Deteniendo bot...")  # <--- AQUÍ ESTABA EL ERROR
             break
         except Exception as e:
             print(f"Error en loop: {e}")
             time.sleep(60)
- cambiado?
-*   **`HORA_INICIO` y `HORA_FIN`**: El bot comprueba la hora actual. Si son las 2
