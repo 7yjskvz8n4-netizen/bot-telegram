@@ -110,7 +110,7 @@ def scan():
         print(f"💤 [{ahora_str}] Fuera de horario (13:00 - 22:00).")
         return
 
-    print(f"🔄 [{ahora_str}] Iniciando escaneo transparente...")
+    print(f"🔄 [{ahora_str}] Iniciando escaneo (Modo Ahorro de Créditos)...")
     headers = {"x-apisports-key": API_KEY}
     fecha_hoy = ahora_dt.strftime('%Y-%m-%d')
     
@@ -119,57 +119,61 @@ def scan():
         data = r.json().get("response", [])
         
         value_bets = []
-        partidos_en_tus_ligas = [] # Nueva lista para seguimiento
+        partidos_analizados = 0
         
         for m in data:
             if m["league"]["id"] not in LEAGUES: continue 
             
-            # Guardamos el nombre del encuentro para el reporte de terminal
+            fixture_id = m["fixture"]["id"]
             match_name = f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
-            partidos_en_tus_ligas.append(match_name)
+
+            # --- PASO 1: CONSULTAR CUOTAS PRIMERO (1 Crédito) ---
+            h_o, d_o, a_o = get_odds(fixture_id)
             
+            # Verificamos si alguna cuota llega al mínimo de 1.45
+            if h_o < 1.45 and d_o < 1.45 and a_o < 1.45:
+                # Si ninguna cuota sirve, pasamos al siguiente sin gastar en estadísticas
+                continue
+
+            # --- PASO 2: SOLO SI LA CUOTA SIRVE, CALCULAMOS PROBABILIDADES ---
+            # Aquí es donde ahorramos 2 créditos si el paso 1 falló
+            partidos_analizados += 1
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
+            
+            # xG dinámico (Ajustado para ser un poco más agresivo como pediste antes)
             h_xg = 1.4 + (team_form(h_id) * 0.8)
             a_xg = 1.1 + (team_form(a_id) * 0.6)
-            h_p, d_p, a_p = match_probs(h_xg, a_xg)
-            h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
-            if h_o > 0:
-                opciones = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
-                for prob, odd, label, icon in opciones:
-                    if prob >= 0.48 and odd >= 1.35:
-                        edge = prob - (1/odd)
-                        if edge > 0.002:
-                            stake_final = kelly(prob, odd) * BANK
-                            if stake_final > 0.5:
-                                value_bets.append(
-                                    f"{icon} <b>{match_name}</b>\n"
-                                    f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
-                                    f"📊 Prob: {round(prob*100, 1)}% | Stake: €{round(stake_final, 2)}"
-                                )
-
-        # --- REPORTE DETALLADO EN TERMINAL ---
-        if partidos_en_tus_ligas:
-            print(f"🏟️ Partidos analizados en tus ligas ({len(partidos_en_tus_ligas)}):")
-            for p in partidos_en_tus_ligas:
-                print(f"  - {p}")
-        else:
-            print("⚠️ No se encontraron partidos hoy para las ligas de tu lista.")
+            h_p, d_p, a_p = match_probs(h_xg, a_xg)
+            
+            opciones = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
+            
+            for prob, odd, label, icon in opciones:
+                # Filtro de cuota 1.45 aplicado aquí también
+                if prob >= 0.48 and odd >= 1.45: 
+                    edge = prob - (1/odd)
+                    if edge > 0.001:
+                        stake_final = kelly(prob, odd) * BANK
+                        if stake_final > 0.5:
+                            value_bets.append(
+                                f"{icon} <b>{match_name}</b>\n"
+                                f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
+                                f"📊 Prob: {round(prob*100, 1)}% | Stake: €{round(stake_final, 2)}"
+                            )
 
         if value_bets:
             send("🔥 <b>VALOR DETECTADO</b>\n\n" + "\n\n".join(value_bets[:5]))
             ciclos_sin_valor = 0 
         else:
             ciclos_sin_valor += 1
-            print(f"🏁 Escaneo completado. No se encontró ventaja matemática en estos encuentros.")
+            print(f"🏁 Escaneo completado. Analizados a fondo {partidos_analizados} partidos con cuota atractiva.")
             
             if ciclos_sin_valor >= 3:
-                send(f"🛰️ <b>Reporte:</b> El bot sigue activo. Analizados {len(partidos_en_tus_ligas)} encuentros en el último ciclo.")
+                send(f"🛰️ <b>Reporte:</b> Bot activo. Analizados {partidos_analizados} partidos con cuotas > 1.45.")
                 ciclos_sin_valor = 0
 
     except Exception as e:
         print(f"❌ Error en scan: {e}")
-
 # =========================
 # 🚀 EJECUCIÓN (UNIFICADA)
 # =========================
