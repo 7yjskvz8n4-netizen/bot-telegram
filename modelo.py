@@ -5,7 +5,7 @@ from datetime import datetime
 import random
 
 # =========================
-# ⚙️ CONFIGURACIÓN
+# ⚙️ CONFIGURACIÓN (REVISADA)
 # =========================
 API_KEY = "167721723854a65832f09abdeb92952b"
 TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
@@ -14,11 +14,12 @@ CHAT_ID = "1335805552"
 BANK = 100                  
 KELLY_FACTOR = 0.50         
 MIN_ODDS = 1.40             
-BASE_URL = "[https://v3.football.api-sports.io](https://v3.football.api-sports.io)"
+BASE_URL = "https://v3.football.api-sports.io"
 
-# Horario de funcionamiento
+# Variables de tiempo (Asegúrate de que estas tres estén aquí)
 HORA_INICIO = 13
 HORA_FIN = 22
+MINUTOS_ESPERA = 20  # <--- Esta es la que te faltaba
 
 LEAGUES = [
     39, 40, 41, 140, 141, 135, 136, 78, 79, 61, 62, 88, 94, 71, 13, 253, 2, 3
@@ -31,9 +32,8 @@ ciclos_sin_valor = 0
 # =========================
 def send(msg):
     try:
-        url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": 'HTML'})
-        print(f"📡 Mensaje enviado a Telegram")
     except Exception as e:
         print(f"❌ Error Telegram: {e}")
 
@@ -103,11 +103,16 @@ def get_odds(fixture_id):
 # =========================
 def scan():
     global ciclos_sin_valor
-    ahora = datetime.now()
-    print(f"🔄 [{ahora.strftime('%H:%M:%S')}] Escaneando...")
+    ahora_dt = datetime.now()
+    ahora_str = ahora_dt.strftime('%H:%M:%S')
     
+    if ahora_dt.hour < HORA_INICIO or ahora_dt.hour >= HORA_FIN:
+        print(f"💤 [{ahora_str}] Fuera de horario (13:00 - 22:00).")
+        return
+
+    print(f"🔄 [{ahora_str}] Iniciando escaneo...")
     headers = {"x-apisports-key": API_KEY}
-    fecha_hoy = ahora.strftime('%Y-%m-%d')
+    fecha_hoy = ahora_dt.strftime('%Y-%m-%d')
     
     try:
         r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params={"date": fecha_hoy})
@@ -117,7 +122,6 @@ def scan():
         
         for m in data:
             if m["league"]["id"] not in LEAGUES: continue 
-
             partidos_analizados += 1
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
             h_xg = 1.2 + (team_form(h_id) * 0.8)
@@ -144,19 +148,19 @@ def scan():
             ciclos_sin_valor = 0 
         else:
             ciclos_sin_valor += 1
-            # Reporte cada 3 ciclos (60 minutos, ya que el ciclo es de 20 min)
+            print(f"🏁 Escaneo completado. Sin valor.")
             if ciclos_sin_valor >= 3:
-                send(f"🛰️ <b>Reporte:</b> Escaneo finalizado. {partidos_analizados} partidos revisados. Sin valor claro.")
+                send(f"🛰️ <b>Reporte:</b> El bot sigue activo rindiendo en horario oficial.")
                 ciclos_sin_valor = 0
 
     except Exception as e:
         print(f"❌ Error en scan: {e}")
 
 # =========================
-# 🚀 EJECUCIÓN
+# 🚀 EJECUCIÓN (UNIFICADA)
 # =========================
 if __name__ == '__main__':
-    print(f"🚀 BOT HEDGE FUND ACTIVADO")
+    print("🚀 BOT HEDGE FUND ACTIVADO")
     print(f"⏰ Horario: {HORA_INICIO}:00 a {HORA_FIN}:00")
     print(f"⏱️ Frecuencia: Cada {MINUTOS_ESPERA} minutos")
     
@@ -165,11 +169,10 @@ if __name__ == '__main__':
     while True:
         try:
             scan()
-            # Espera 20 minutos (20 * 60 segundos)
             time.sleep(MINUTOS_ESPERA * 60) 
         except KeyboardInterrupt:
-            print("Deteniendo bot...")  # <--- AQUÍ ESTABA EL ERROR
+            print("Deteniendo bot...")
             break
         except Exception as e:
-            print(f"Error en loop: {e}")
+            print(f"Error: {e}")
             time.sleep(60)
