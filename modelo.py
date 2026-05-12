@@ -129,17 +129,17 @@ def scan():
             partidos_en_tus_ligas.append(match_name)
             
             h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
-            h_xg = 1.2 + (team_form(h_id) * 0.8)
-            a_xg = 1.0 + (team_form(a_id) * 0.6)
+            h_xg = 1.4 + (team_form(h_id) * 0.8)
+            a_xg = 1.1 + (team_form(a_id) * 0.6)
             h_p, d_p, a_p = match_probs(h_xg, a_xg)
             h_o, d_o, a_o = get_odds(m["fixture"]["id"])
             
             if h_o > 0:
                 opciones = [(h_p, h_o, "HOME", "🏠"), (d_p, d_o, "DRAW", "🤝"), (a_p, a_o, "AWAY", "🚀")]
                 for prob, odd, label, icon in opciones:
-                    if prob >= 0.55 and odd >= MIN_ODDS:
+                    if prob >= 0.48 and odd >= 1.35:
                         edge = prob - (1/odd)
-                        if edge > 0.005:
+                        if edge > 0.002:
                             stake_final = kelly(prob, odd) * BANK
                             if stake_final > 0.5:
                                 value_bets.append(
