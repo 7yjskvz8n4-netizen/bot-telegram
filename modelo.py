@@ -12,8 +12,10 @@ TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 
 BANK = 100                  
-KELLY_FACTOR = 0.50         
-MIN_ODDS = 1.45             
+KELLY_FACTOR = 0.25      
+MIN_ODDS = 1.45
+MAX_ODDS = 2.65
+
 BASE_URL = "https://v3.football.api-sports.io"
 
 # Variables de tiempo (Asegúrate de que estas tres estén aquí)
@@ -153,11 +155,11 @@ def scan():
             
             for prob, odd, label, icon in opciones:
                 # Filtro de cuota 1.45 aplicado aquí también
-                if prob >= 0.48 and odd >= 1.45: 
+                if prob >= 0.51 and odd >= 1.45: 
                     edge = prob - (1/odd)
                     if edge > 0.001:
                         stake_final = kelly(prob, odd) * BANK
-                        if stake_final > 0.5:
+                        if stake_final > 1:
                             value_bets.append(
                                 f"{icon} <b>{match_name}</b>\n"
                                 f"➡️ Lado: <b>{label}</b> | Cuota: {odd}\n"
