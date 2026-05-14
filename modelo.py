@@ -16,7 +16,6 @@ MAX_ODDS = 2.65
 LEAGUES = [39, 140, 135, 78, 61, 88, 94, 71, 13, 2] 
 BASE_URL = "https://v3.football.api-sports.io"
 
-# Variable global para controlar el aviso de actividad cada hora
 ultima_hora_aviso = -1
 
 # === FUNCIONES DE APOYO ===
@@ -34,6 +33,7 @@ def kelly(p, o):
     return max(0, k * KELLY_FACTOR)
 
 def team_form(team_id):
+    # Simulación de forma, podrías ampliarlo con otra llamada a la API
     return 0.5 
 
 def get_odds(fixture_id):
@@ -42,6 +42,7 @@ def get_odds(fixture_id):
         r = requests.get(f"{BASE_URL}/odds", headers=h, params={"fixture": fixture_id}).json()
         bookmaker = r["response"][0]["bookmakers"][0]
         bets = bookmaker["bets"][0]["values"]
+        # Retorna Gana Local (0), Empate (1), Gana Visita (2)
         return float(bets[0]["odd"]), float(bets[1]["odd"]), float(bets[2]["odd"])
     except:
         return 0, 0, 0
@@ -57,6 +58,11 @@ def match_probs(h_xg, a_xg):
             else: a_p += prob
     return h_p, d_p, a_p
 
+def clasificar_cuota(o):
+    if o < 1.70: return "Baja"
+    if o <= 2.20: return "Media"
+    return "Alta"
+
 # === FUNCIÓN PRINCIPAL DE ESCANEO ===
 
 def scan():
@@ -65,19 +71,20 @@ def scan():
     dia_semana = ahora.weekday() 
     hora_actual = ahora.hour
 
-    # Lógica de Horarios
+    # 1. Lógica de Horarios (L-V: 17h, S-D: 11h)
     h_inicio = 17 if dia_semana < 5 else 11
     h_fin = 22
 
-    # Aviso de Actividad (Se envía una vez cada hora si el bot está corriendo)
+    # Si está fuera de horario, imprimimos en consola y cortamos ejecución
+    if hora_actual < h_inicio or hora_actual >= h_fin:
+        print(f"💤 [{ahora.strftime('%H:%M')}] Fuera de horario operativo. El bot descansa.")
+        return
+
+    # 2. Aviso de Actividad (Solo se envía una vez por hora DENTRO del horario)
     if hora_actual != ultima_hora_aviso:
         status_msg = f"📡 <b>Bot Activo</b>\n⏰ Hora: {ahora.strftime('%H:%M')}\n⚙️ Estado: Analizando mercados..."
         send(status_msg)
         ultima_hora_aviso = hora_actual
-
-    if hora_actual < h_inicio or hora_actual >= h_fin:
-        print(f"💤 [{ahora.strftime('%H:%M')}] Fuera de horario operativo.")
-        return
 
     print(f"🔄 [{ahora.strftime('%H:%M')}] Iniciando escaneo de partidos...")
     headers = {"x-apisports-key": API_KEY}
@@ -99,27 +106,28 @@ def scan():
         league_name = m["league"]["name"]
 
         h_o, d_o, a_o = get_odds(f_id)
-        if h_o < MIN_ODDS and a_o < MIN_ODDS: continue
+        if h_o == 0: continue # Si no hay cuotas, saltar
 
-        h_id, a_id = m["teams"]["home"]["id"], m["teams"]["away"]["id"]
-        h_xg = 1.4 + (team_form(h_id) * 0.8)
-        a_xg = 1.1 + (team_form(a_id) * 0.6)
-        
+        # Parámetros básicos de Poisson (puedes ajustarlos según tu estrategia)
+        h_xg = 1.4 + (team_form(m["teams"]["home"]["id"]) * 0.8)
+        a_xg = 1.1 + (team_form(m["teams"]["away"]["id"]) * 0.6)
         h_p, d_p, a_p = match_probs(h_xg, a_xg)
         
         current_picks = []
 
         # Lógica Gana Local
         if h_p >= 0.50 and MIN_ODDS <= h_o <= MAX_ODDS:
-            if (h_p - (1/h_o)) > 0.015:
+            diff = h_p - (1/h_o)
+            if diff > 0.015:
                 s = round(kelly(h_p, h_o) * BANK, 2)
-                current_picks.append({"label": "Gana Local", "odd": h_o, "stake": s})
+                current_picks.append({"label": "Gana Local", "odd": h_o, "stake": s, "prob": h_p, "diff": diff, "pos": "Local"})
 
         # Lógica Gana Visitante
         if a_p >= 0.50 and MIN_ODDS <= a_o <= MAX_ODDS:
-            if (a_p - (1/a_o)) > 0.015:
+            diff = a_p - (1/a_o)
+            if diff > 0.015:
                 s = round(kelly(a_p, a_o) * BANK, 2)
-                current_picks.append({"label": "Gana Visita", "odd": a_o, "stake": s})
+                current_picks.append({"label": "Gana Visita", "odd": a_o, "stake": s, "prob": a_p, "diff": diff, "pos": "Visitante"})
 
         if current_picks:
             msg_lines = [f"📊 <b>{m_name}</b> ({league_name})"]
@@ -130,8 +138,15 @@ def scan():
                         msg_lines.append(f"✅ {pick['label']} (@{pick['odd']}) [Stk: €{pick['stake']}]")
                         
                         fecha_csv = ahora.strftime('%Y-%m-%d')
-                        # Usamos replace para que Excel español detecte los números correctamente
-                        linea = f"{fecha_csv};{m_name};{league_name};{pick['label']};{str(pick['odd']).replace('.', ',')};{str(pick['stake']).replace('.', ',')}\n"
+                        tipo = clasificar_cuota(pick['odd'])
+                        
+                        # Formato CSV: Fecha;Partido;Liga;Pick;Cuota;Stake;Prob_Bot;Diff;Tipo;Posicion
+                        # Usamos replace('.', ',') para que Excel lo detecte como número automáticamente
+                        linea = (f"{fecha_csv};{m_name};{league_name};{pick['label']};"
+                                 f"{str(pick['odd']).replace('.', ',')};{str(pick['stake']).replace('.', ',')};"
+                                 f"{str(round(pick['prob']*100, 2)).replace('.', ',')}%;"
+                                 f"{str(round(pick['diff']*100, 2)).replace('.', ',')}%;"
+                                 f"{tipo};{pick['pos']}\n")
                         f.write(linea)
                 
                 send("\n".join(msg_lines))
@@ -140,17 +155,16 @@ def scan():
             except Exception as e:
                 print(f"❌ Error al escribir registro: {e}")
 
-    print(f"✅ Escaneo finalizado. Partidos en tus ligas hoy: {partidos_analizados}")
+    print(f"✅ Escaneo finalizado. Partidos analizados: {partidos_analizados}")
 
 if __name__ == "__main__":
-    print("🚀 Bot Iniciado con aviso horario.")
+    print("🚀 Bot Iniciado. Respetando horarios operativos.")
     while True:
         try:
             scan()
-            # Escaneo cada 30 minutos para no saturar la API
-            time.sleep(1800) 
+            time.sleep(1800) # Escaneo cada 30 minutos
         except KeyboardInterrupt:
-            print("🛑 Bot detenido.")
+            print("🛑 Bot detenido manualmente.")
             break
         except Exception as e:
             print(f"Error crítico: {e}")
