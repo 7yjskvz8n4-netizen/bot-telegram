@@ -723,25 +723,25 @@ python bot.py
 
 #✅ Analiza Top 5 ligas + MLS + Brasil
 
-✅ Analiza:
+#✅ Analiza:
 
 * Home Win
 * Over 2.5
 * BTTS
 
-✅ Filtra apuestas basura
+#✅ Filtra apuestas basura
 
-✅ Envía SOLO las 5 mejores del día
+#✅ Envía SOLO las 5 mejores del día
 
-✅ Usa score inteligente
+#✅ Usa score inteligente
 
-✅ Usa Poisson
+#✅ Usa Poisson
 
-✅ Usa gestión bankroll
+#✅ Usa gestión bankroll
 
-✅ Guarda histórico CSV
+#✅ Guarda histórico CSV
 
-✅ Funciona con horario Madrid
+#✅ Funciona con horario Madrid
 
 # CONSEJO IMPORTANTE
 
