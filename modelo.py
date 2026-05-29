@@ -1,171 +1,431 @@
 import requests
 import math
 import time
-from datetime import datetime
+import csv
+from datetime import datetime, timedelta
 
-# === CONFIGURACIÓN ===
+# =========================================================
+# CONFIG
+# =========================================================
+
 API_KEY = "167721723854a65832f09abdeb92952b"
 TELEGRAM_TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 
-BANK = 100
-KELLY_FACTOR = 0.25  
-MIN_ODDS = 1.45
-MAX_ODDS = 2.65
-
-LEAGUES = [39, 140, 135, 78, 61, 88, 94, 71, 13, 2] 
 BASE_URL = "https://v3.football.api-sports.io"
 
-ultima_hora_aviso = -1
+BANKROLL = 100
+KELLY_FACTOR = 0.15
+MAX_STAKE_PERCENT = 0.03
 
-# === FUNCIONES DE APOYO ===
+MIN_EDGE = 0.05
+MIN_ODDS = 1.50
+MAX_ODDS = 2.50
 
-def send(msg):
+SCAN_INTERVAL = 1800
+
+LEAGUES = [
+    39,   # Premier
+    140,  # LaLiga
+    135,  # Serie A
+    78,   # Bundesliga
+    61,   # Ligue 1
+    88,   # Eredivisie
+    94,   # Portugal
+]
+
+HEADERS = {
+    "x-apisports-key": API_KEY
+}
+
+# =========================================================
+# TELEGRAM
+# =========================================================
+
+def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
     try:
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
+        requests.post(
+            url,
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg,
+                "parse_mode": "HTML"
+            },
+            timeout=10
+        )
     except Exception as e:
-        print(f"❌ Error enviando a Telegram: {e}")
+        print(f"Telegram Error: {e}")
 
-def kelly(p, o):
-    if o <= 1: return 0
-    k = (p * o - 1) / (o - 1)
-    return max(0, k * KELLY_FACTOR)
+# =========================================================
+# KELLY
+# =========================================================
 
-def team_form(team_id):
-    # Simulación de forma, podrías ampliarlo con otra llamada a la API
-    return 0.5 
+def kelly(prob, odds):
+
+    if odds <= 1:
+        return 0
+
+    k = ((prob * odds) - 1) / (odds - 1)
+
+    k *= KELLY_FACTOR
+
+    k = max(0, k)
+
+    return min(k, MAX_STAKE_PERCENT)
+
+# =========================================================
+# POISSON
+# =========================================================
+
+def poisson_probability(lmbda, k):
+    return (math.exp(-lmbda) * (lmbda ** k)) / math.factorial(k)
+
+def calculate_match_probs(home_xg, away_xg):
+
+    home_prob = 0
+    draw_prob = 0
+    away_prob = 0
+
+    for home_goals in range(8):
+        for away_goals in range(8):
+
+            p = (
+                poisson_probability(home_xg, home_goals) *
+                poisson_probability(away_xg, away_goals)
+            )
+
+            if home_goals > away_goals:
+                home_prob += p
+            elif home_goals == away_goals:
+                draw_prob += p
+            else:
+                away_prob += p
+
+    return home_prob, draw_prob, away_prob
+
+def over25_probability(home_xg, away_xg):
+
+    prob = 0
+
+    for home_goals in range(8):
+        for away_goals in range(8):
+
+            total = home_goals + away_goals
+
+            p = (
+                poisson_probability(home_xg, home_goals) *
+                poisson_probability(away_xg, away_goals)
+            )
+
+            if total >= 3:
+                prob += p
+
+    return prob
+
+# =========================================================
+# API HELPERS
+# =========================================================
+
+def get_today_matches():
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        r = requests.get(
+            f"{BASE_URL}/fixtures",
+            headers=HEADERS,
+            params={"date": today},
+            timeout=20
+        )
+
+        return r.json()["response"]
+
+    except Exception as e:
+        print(f"Fixtures Error: {e}")
+        return []
+
+def get_last_matches(team_id):
+
+    try:
+        r = requests.get(
+            f"{BASE_URL}/fixtures",
+            headers=HEADERS,
+            params={
+                "team": team_id,
+                "last": 5
+            },
+            timeout=20
+        )
+
+        return r.json()["response"]
+
+    except:
+        return []
+
+def get_team_form(team_id):
+
+    matches = get_last_matches(team_id)
+
+    if not matches:
+        return {
+            "attack": 1.2,
+            "defense": 1.2
+        }
+
+    goals_scored = 0
+    goals_conceded = 0
+
+    for match in matches:
+
+        home_id = match["teams"]["home"]["id"]
+
+        if home_id == team_id:
+            scored = match["goals"]["home"]
+            conceded = match["goals"]["away"]
+        else:
+            scored = match["goals"]["away"]
+            conceded = match["goals"]["home"]
+
+        goals_scored += scored
+        goals_conceded += conceded
+
+    avg_scored = goals_scored / len(matches)
+    avg_conceded = goals_conceded / len(matches)
+
+    return {
+        "attack": avg_scored,
+        "defense": avg_conceded
+    }
 
 def get_odds(fixture_id):
-    h = {"x-apisports-key": API_KEY}
+
     try:
-        r = requests.get(f"{BASE_URL}/odds", headers=h, params={"fixture": fixture_id}).json()
-        bookmaker = r["response"][0]["bookmakers"][0]
-        bets = bookmaker["bets"][0]["values"]
-        # Retorna Gana Local (0), Empate (1), Gana Visita (2)
-        return float(bets[0]["odd"]), float(bets[1]["odd"]), float(bets[2]["odd"])
-    except:
-        return 0, 0, 0
 
-def match_probs(h_xg, a_xg):
-    h_p, d_p, a_p = 0, 0, 0
-    for i in range(10):
-        for j in range(10):
-            prob = (math.exp(-h_xg) * h_xg**i / math.factorial(i)) * \
-                   (math.exp(-a_xg) * a_xg**j / math.factorial(j))
-            if i > j: h_p += prob
-            elif i == j: d_p += prob
-            else: a_p += prob
-    return h_p, d_p, a_p
+        r = requests.get(
+            f"{BASE_URL}/odds",
+            headers=HEADERS,
+            params={"fixture": fixture_id},
+            timeout=20
+        )
 
-def clasificar_cuota(o):
-    if o < 1.70: return "Baja"
-    if o <= 2.20: return "Media"
-    return "Alta"
+        data = r.json()["response"]
 
-# === FUNCIÓN PRINCIPAL DE ESCANEO ===
+        if not data:
+            return None
 
-def scan():
-    global ultima_hora_aviso
-    ahora = datetime.now()
-    dia_semana = ahora.weekday() 
-    hora_actual = ahora.hour
+        bookmakers = data[0]["bookmakers"]
 
-    # 1. Lógica de Horarios (L-V: 17h, S-D: 11h)
-    h_inicio = 17 if dia_semana < 5 else 11
-    h_fin = 22
+        if not bookmakers:
+            return None
 
-    # Si está fuera de horario, imprimimos en consola y cortamos ejecución
-    if hora_actual < h_inicio or hora_actual >= h_fin:
-        print(f"💤 [{ahora.strftime('%H:%M')}] Fuera de horario operativo. El bot descansa.")
-        return
+        bets = bookmakers[0]["bets"]
 
-    # 2. Aviso de Actividad (Solo se envía una vez por hora DENTRO del horario)
-    if hora_actual != ultima_hora_aviso:
-        status_msg = f"📡 <b>Bot Activo</b>\n⏰ Hora: {ahora.strftime('%H:%M')}\n⚙️ Estado: Analizando mercados..."
-        send(status_msg)
-        ultima_hora_aviso = hora_actual
+        match_winner = None
 
-    print(f"🔄 [{ahora.strftime('%H:%M')}] Iniciando escaneo de partidos...")
-    headers = {"x-apisports-key": API_KEY}
-    
+        for bet in bets:
+            if bet["name"] == "Match Winner":
+                match_winner = bet
+                break
+
+        if not match_winner:
+            return None
+
+        odds = {}
+
+        for value in match_winner["values"]:
+            odds[value["value"]] = float(value["odd"])
+
+        return {
+            "home": odds.get("Home"),
+            "draw": odds.get("Draw"),
+            "away": odds.get("Away")
+        }
+
+    except Exception as e:
+        print(f"Odds Error: {e}")
+        return None
+
+# =========================================================
+# VALUE BET
+# =========================================================
+
+def calculate_edge(probability, odds):
+
+    implied = 1 / odds
+
+    return probability - implied
+
+# =========================================================
+# CSV
+# =========================================================
+
+def save_pick(data):
+
+    file_exists = False
+
     try:
-        r = requests.get(f"{BASE_URL}/fixtures", headers=headers, params={"date": ahora.strftime('%Y-%m-%d')})
-        data = r.json().get("response", [])
+        with open("registro_apuestas.csv", "r", encoding="utf-8"):
+            file_exists = True
     except:
-        print("❌ Error conectando con la API")
-        return
+        pass
 
-    partidos_analizados = 0
-    for m in data:
-        if m["league"]["id"] not in LEAGUES: continue
-        
-        partidos_analizados += 1
-        f_id = m["fixture"]["id"]
-        m_name = f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
-        league_name = m["league"]["name"]
+    with open(
+        "registro_apuestas.csv",
+        "a",
+        newline="",
+        encoding="utf-8"
+    ) as file:
 
-        h_o, d_o, a_o = get_odds(f_id)
-        if h_o == 0: continue # Si no hay cuotas, saltar
+        writer = csv.writer(file, delimiter=";")
 
-        # Parámetros básicos de Poisson (puedes ajustarlos según tu estrategia)
-        h_xg = 1.4 + (team_form(m["teams"]["home"]["id"]) * 0.8)
-        a_xg = 1.1 + (team_form(m["teams"]["away"]["id"]) * 0.6)
-        h_p, d_p, a_p = match_probs(h_xg, a_xg)
-        
-        current_picks = []
+        if not file_exists:
+            writer.writerow([
+                "Fecha",
+                "Partido",
+                "Liga",
+                "Pick",
+                "Cuota",
+                "Probabilidad",
+                "Edge",
+                "Stake"
+            ])
 
-        # Lógica Gana Local
-        if h_p >= 0.50 and MIN_ODDS <= h_o <= MAX_ODDS:
-            diff = h_p - (1/h_o)
-            if diff > 0.015:
-                s = round(kelly(h_p, h_o) * BANK, 2)
-                current_picks.append({"label": "Gana Local", "odd": h_o, "stake": s, "prob": h_p, "diff": diff, "pos": "Local"})
+        writer.writerow(data)
 
-        # Lógica Gana Visitante
-        if a_p >= 0.50 and MIN_ODDS <= a_o <= MAX_ODDS:
-            diff = a_p - (1/a_o)
-            if diff > 0.015:
-                s = round(kelly(a_p, a_o) * BANK, 2)
-                current_picks.append({"label": "Gana Visita", "odd": a_o, "stake": s, "prob": a_p, "diff": diff, "pos": "Visitante"})
+# =========================================================
+# MAIN SCAN
+# =========================================================
 
-        if current_picks:
-            msg_lines = [f"📊 <b>{m_name}</b> ({league_name})"]
-            
-            try:
-                with open("registro_apuestas.csv", "a", encoding="utf-8") as f:
-                    for pick in current_picks:
-                        msg_lines.append(f"✅ {pick['label']} (@{pick['odd']}) [Stk: €{pick['stake']}]")
-                        
-                        fecha_csv = ahora.strftime('%Y-%m-%d')
-                        tipo = clasificar_cuota(pick['odd'])
-                        
-                        # Formato CSV: Fecha;Partido;Liga;Pick;Cuota;Stake;Prob_Bot;Diff;Tipo;Posicion
-                        # Usamos replace('.', ',') para que Excel lo detecte como número automáticamente
-                        linea = (f"{fecha_csv};{m_name};{league_name};{pick['label']};"
-                                 f"{str(pick['odd']).replace('.', ',')};{str(pick['stake']).replace('.', ',')};"
-                                 f"{str(round(pick['prob']*100, 2)).replace('.', ',')}%;"
-                                 f"{str(round(pick['diff']*100, 2)).replace('.', ',')}%;"
-                                 f"{tipo};{pick['pos']}\n")
-                        f.write(linea)
-                
-                send("\n".join(msg_lines))
-                print(f"✅ Pick enviado: {m_name}")
-                
-            except Exception as e:
-                print(f"❌ Error al escribir registro: {e}")
+def analyze_matches():
 
-    print(f"✅ Escaneo finalizado. Partidos analizados: {partidos_analizados}")
+    print("Analizando partidos...")
+
+    matches = get_today_matches()
+
+    total = 0
+    picks = 0
+
+    for match in matches:
+
+        league_id = match["league"]["id"]
+
+        if league_id not in LEAGUES:
+            continue
+
+        total += 1
+
+        fixture_id = match["fixture"]["id"]
+
+        home_team = match["teams"]["home"]["name"]
+        away_team = match["teams"]["away"]["name"]
+
+        league_name = match["league"]["name"]
+
+        print(f"Checking {home_team} vs {away_team}")
+
+        odds = get_odds(fixture_id)
+
+        if not odds:
+            continue
+
+        if not odds["home"] or not odds["away"]:
+            continue
+
+        if odds["home"] < MIN_ODDS or odds["home"] > MAX_ODDS:
+            continue
+
+        home_form = get_team_form(match["teams"]["home"]["id"])
+        away_form = get_team_form(match["teams"]["away"]["id"])
+
+        home_xg = (
+            (home_form["attack"] * 1.15) -
+            (away_form["defense"] * 0.85)
+        )
+
+        away_xg = (
+            (away_form["attack"] * 1.00) -
+            (home_form["defense"] * 0.75)
+        )
+
+        home_xg = max(0.4, home_xg)
+        away_xg = max(0.4, away_xg)
+
+        home_prob, draw_prob, away_prob = calculate_match_probs(
+            home_xg,
+            away_xg
+        )
+
+        edge = calculate_edge(home_prob, odds["home"])
+
+        if edge >= MIN_EDGE:
+
+            stake_percent = kelly(home_prob, odds["home"])
+
+            stake = round(BANKROLL * stake_percent, 2)
+
+            msg = (
+                f"🔥 <b>VALUE BET DETECTADA</b>\n\n"
+                f"⚽ {home_team} vs {away_team}\n"
+                f"🏆 {league_name}\n\n"
+                f"✅ Pick: Gana Local\n"
+                f"💰 Cuota: {odds['home']}\n"
+                f"📈 Probabilidad: {round(home_prob*100,2)}%\n"
+                f"💎 Edge: {round(edge*100,2)}%\n"
+                f"💵 Stake: €{stake}\n"
+                f"📊 xG: {round(home_xg,2)} - {round(away_xg,2)}"
+            )
+
+            send_telegram(msg)
+
+            save_pick([
+                datetime.now().strftime("%Y-%m-%d"),
+                f"{home_team} vs {away_team}",
+                league_name,
+                "Home Win",
+                odds["home"],
+                round(home_prob * 100, 2),
+                round(edge * 100, 2),
+                stake
+            ])
+
+            print(f"VALUE FOUND: {home_team}")
+
+            picks += 1
+
+    print(f"Partidos analizados: {total}")
+    print(f"Picks enviadas: {picks}")
+
+# =========================================================
+# LOOP
+# =========================================================
 
 if __name__ == "__main__":
-    print("🚀 Bot Iniciado. Respetando horarios operativos.")
+
+    print("BOT INICIADO")
+
+    send_telegram("🚀 Bot iniciado correctamente")
+
     while True:
+
         try:
-            scan()
-            time.sleep(1800) # Escaneo cada 30 minutos
+
+            analyze_matches()
+
+            print(f"Esperando {SCAN_INTERVAL/60} minutos...")
+
+            time.sleep(SCAN_INTERVAL)
+
         except KeyboardInterrupt:
-            print("🛑 Bot detenido manualmente.")
+
+            print("Bot detenido")
             break
+
         except Exception as e:
-            print(f"Error crítico: {e}")
+
+            print(f"Critical Error: {e}")
+
+            send_telegram(f"❌ Error crítico:\n{e}")
+
             time.sleep(60)
