@@ -721,7 +721,7 @@ python bot.py
 
 # QUÉ HACE ESTE BOT
 
-✅ Analiza Top 5 ligas + MLS + Brasil
+#✅ Analiza Top 5 ligas + MLS + Brasil
 
 ✅ Analiza:
 
