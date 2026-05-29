@@ -25,18 +25,13 @@ MAX_ODDS = 2.50
 SCAN_INTERVAL = 1800
 
 LEAGUES = [
-    LEAGUES = [
-
     39,   # Premier League (Inglaterra)
     140,  # LaLiga (España)
     135,  # Serie A (Italia)
     78,   # Bundesliga (Alemania)
     61,   # Ligue 1 (Francia)
-
     253,  # MLS (Estados Unidos)
     71,   # Brasileirao Serie A (Brasil)
-
-]
 ]
 
 HEADERS = {
