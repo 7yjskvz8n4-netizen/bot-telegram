@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # CONFIG
 # =========================================================
 
-API_KEY = "167721723854a65832f09abdeb92952b"
+API_KEY = "e93b17bb02fe486f1fa731494df8814c"
 TELEGRAM_TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
 CHAT_ID = "1335805552"
 
