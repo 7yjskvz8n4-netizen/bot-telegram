@@ -8,7 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # =========================================================
-# CONFIG
+# CONFIGURACION
 # =========================================================
 
 API_KEY = "e93b17bb02fe486f1fa731494df8814c"
@@ -17,43 +17,41 @@ CHAT_ID = "1335805552"
 
 BASE_URL = "https://v3.football.api-sports.io"
 
+TIMEZONE = ZoneInfo("Europe/Madrid")
+
 BANKROLL = 100
 
-KELLY_FACTOR = 0.15
+KELLY_FACTOR = 0.10
 MAX_STAKE_PERCENT = 0.03
 
 MIN_EDGE = 0.05
-MIN_ODDS = 1.50
-MAX_ODDS = 2.50
+MIN_ODDS = 1.55
+MAX_ODDS = 2.40
+
+MAX_DAILY_PICKS = 5
 
 SCAN_INTERVAL = 1800
 
-TIMEZONE = ZoneInfo("Europe/Madrid")
-
 LEAGUES = [
-
     39,   # Premier League
     140,  # LaLiga
     135,  # Serie A
     78,   # Bundesliga
     61,   # Ligue 1
-
     253,  # MLS
-    71,   # Brasileirao
-
+    71    # Brasil Serie A
 ]
 
 HEADERS = {
     "x-apisports-key": API_KEY
 }
 
-ultima_hora_aviso = -1
-
 # =========================================================
 # TELEGRAM
 # =========================================================
 
-def send_telegram(msg):
+
+def send_telegram(message):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
@@ -63,7 +61,7 @@ def send_telegram(msg):
             url,
             data={
                 "chat_id": CHAT_ID,
-                "text": msg,
+                "text": message,
                 "parse_mode": "HTML"
             },
             timeout=10
@@ -77,12 +75,13 @@ def send_telegram(msg):
 # KELLY
 # =========================================================
 
-def kelly(prob, odds):
+
+def kelly(probability, odds):
 
     if odds <= 1:
         return 0
 
-    k = ((prob * odds) - 1) / (odds - 1)
+    k = ((probability * odds) - 1) / (odds - 1)
 
     k *= KELLY_FACTOR
 
@@ -94,12 +93,15 @@ def kelly(prob, odds):
 # POISSON
 # =========================================================
 
-def poisson_probability(lmbda, k):
+
+def poisson_probability(lmbda, goals):
 
     return (
-        (math.exp(-lmbda) * (lmbda ** k))
-        / math.factorial(k)
+        math.exp(-lmbda)
+        * (lmbda ** goals)
+        / math.factorial(goals)
     )
+
 
 def calculate_match_probs(home_xg, away_xg):
 
@@ -127,9 +129,49 @@ def calculate_match_probs(home_xg, away_xg):
 
     return home_prob, draw_prob, away_prob
 
+
+def over25_probability(home_xg, away_xg):
+
+    probability = 0
+
+    for home_goals in range(8):
+
+        for away_goals in range(8):
+
+            total_goals = home_goals + away_goals
+
+            p = (
+                poisson_probability(home_xg, home_goals)
+                * poisson_probability(away_xg, away_goals)
+            )
+
+            if total_goals >= 3:
+                probability += p
+
+    return probability
+
+
+def btts_probability(home_xg, away_xg):
+
+    probability = 0
+
+    for home_goals in range(1, 8):
+
+        for away_goals in range(1, 8):
+
+            p = (
+                poisson_probability(home_xg, home_goals)
+                * poisson_probability(away_xg, away_goals)
+            )
+
+            probability += p
+
+    return probability
+
 # =========================================================
 # API
 # =========================================================
+
 
 def get_today_matches():
 
@@ -137,14 +179,14 @@ def get_today_matches():
 
     try:
 
-        r = requests.get(
+        response = requests.get(
             f"{BASE_URL}/fixtures",
             headers=HEADERS,
             params={"date": today},
             timeout=20
         )
 
-        return r.json()["response"]
+        return response.json()["response"]
 
     except Exception as e:
 
@@ -152,11 +194,12 @@ def get_today_matches():
 
         return []
 
+
 def get_last_matches(team_id):
 
     try:
 
-        r = requests.get(
+        response = requests.get(
             f"{BASE_URL}/fixtures",
             headers=HEADERS,
             params={
@@ -166,11 +209,12 @@ def get_last_matches(team_id):
             timeout=20
         )
 
-        return r.json()["response"]
+        return response.json()["response"]
 
     except:
 
         return []
+
 
 def get_team_form(team_id):
 
@@ -180,11 +224,13 @@ def get_team_form(team_id):
 
         return {
             "attack": 1.2,
-            "defense": 1.2
+            "defense": 1.2,
+            "wins": 0.5
         }
 
     goals_scored = 0
     goals_conceded = 0
+    wins = 0
 
     for match in matches:
 
@@ -203,26 +249,28 @@ def get_team_form(team_id):
         goals_scored += scored
         goals_conceded += conceded
 
-    avg_scored = goals_scored / len(matches)
-    avg_conceded = goals_conceded / len(matches)
+        if scored > conceded:
+            wins += 1
 
     return {
-        "attack": avg_scored,
-        "defense": avg_conceded
+        "attack": goals_scored / len(matches),
+        "defense": goals_conceded / len(matches),
+        "wins": wins / len(matches)
     }
+
 
 def get_odds(fixture_id):
 
     try:
 
-        r = requests.get(
+        response = requests.get(
             f"{BASE_URL}/odds",
             headers=HEADERS,
             params={"fixture": fixture_id},
             timeout=20
         )
 
-        data = r.json()["response"]
+        data = response.json()["response"]
 
         if not data:
             return None
@@ -232,30 +280,47 @@ def get_odds(fixture_id):
         if not bookmakers:
             return None
 
-        bets = bookmakers[0]["bets"]
-
-        match_winner = None
-
-        for bet in bets:
-
-            if bet["name"] == "Match Winner":
-                match_winner = bet
-                break
-
-        if not match_winner:
-            return None
-
-        odds = {}
-
-        for value in match_winner["values"]:
-
-            odds[value["value"]] = float(value["odd"])
-
-        return {
-            "home": odds.get("Home"),
-            "draw": odds.get("Draw"),
-            "away": odds.get("Away")
+        odds_data = {
+            "home": None,
+            "draw": None,
+            "away": None,
+            "over25": None,
+            "btts": None
         }
+
+        for bet in bookmakers[0]["bets"]:
+
+            # Match Winner
+            if bet["name"] == "Match Winner":
+
+                for value in bet["values"]:
+
+                    if value["value"] == "Home":
+                        odds_data["home"] = float(value["odd"])
+
+                    elif value["value"] == "Draw":
+                        odds_data["draw"] = float(value["odd"])
+
+                    elif value["value"] == "Away":
+                        odds_data["away"] = float(value["odd"])
+
+            # Over 2.5
+            if bet["name"] == "Goals Over/Under":
+
+                for value in bet["values"]:
+
+                    if value["value"] == "Over 2.5":
+                        odds_data["over25"] = float(value["odd"])
+
+            # BTTS
+            if bet["name"] == "Both Teams Score":
+
+                for value in bet["values"]:
+
+                    if value["value"] == "Yes":
+                        odds_data["btts"] = float(value["odd"])
+
+        return odds_data
 
     except Exception as e:
 
@@ -264,8 +329,9 @@ def get_odds(fixture_id):
         return None
 
 # =========================================================
-# EDGE
+# SCORE
 # =========================================================
+
 
 def calculate_edge(probability, odds):
 
@@ -273,9 +339,37 @@ def calculate_edge(probability, odds):
 
     return probability - implied
 
+
+def calculate_score(edge, form, total_xg, odds):
+
+    edge_score = min(edge * 100, 15)
+
+    form_score = form * 20
+
+    xg_score = min(total_xg * 8, 25)
+
+    odds_score = 15
+
+    if odds > 2.10:
+        odds_score = 10
+
+    if odds < 1.65:
+        odds_score = 12
+
+    total = (
+        edge_score
+        + form_score
+        + xg_score
+        + odds_score
+        + 25
+    )
+
+    return round(total, 2)
+
 # =========================================================
 # CSV
 # =========================================================
+
 
 def save_pick(data):
 
@@ -283,12 +377,7 @@ def save_pick(data):
 
     try:
 
-        with open(
-            "registro_apuestas.csv",
-            "r",
-            encoding="utf-8"
-        ):
-
+        with open("registro_apuestas.csv", "r"):
             file_exists = True
 
     except:
@@ -310,22 +399,22 @@ def save_pick(data):
                 "Fecha",
                 "Partido",
                 "Liga",
-                "Pick",
+                "Mercado",
                 "Cuota",
                 "Probabilidad",
                 "Edge",
+                "Score",
                 "Stake"
             ])
 
         writer.writerow(data)
 
 # =========================================================
-# ANALISIS
+# ANALISIS PRINCIPAL
 # =========================================================
 
-def analyze_matches():
 
-    global ultima_hora_aviso
+def analyze_matches():
 
     now = datetime.now(TIMEZONE)
 
@@ -336,39 +425,17 @@ def analyze_matches():
     start_hour = 17 if weekday < 5 else 11
     end_hour = 22
 
-    # =========================
-    # FUERA DE HORARIO
-    # =========================
-
     if current_hour < start_hour or current_hour >= end_hour:
 
-        print(
-            f"💤 [{now.strftime('%H:%M')}] "
-            f"Fuera de horario operativo"
-        )
+        print("Fuera de horario")
 
         return
 
-    # =========================
-    # MENSAJE HORARIO
-    # =========================
+    print("Analizando partidos...")
 
-    if current_hour != ultima_hora_aviso:
-
-        send_telegram(
-            f"📡 <b>BOT ACTIVO</b>\n"
-            f"⏰ Hora Madrid: {now.strftime('%H:%M')}\n"
-            f"⚙️ Analizando mercados..."
-        )
-
-        ultima_hora_aviso = current_hour
-
-    print(f"🔄 Escaneando partidos...")
+    all_picks = []
 
     matches = get_today_matches()
-
-    total = 0
-    picks = 0
 
     for match in matches:
 
@@ -377,8 +444,6 @@ def analyze_matches():
         if league_id not in LEAGUES:
             continue
 
-        total += 1
-
         fixture_id = match["fixture"]["id"]
 
         home_team = match["teams"]["home"]["name"]
@@ -386,102 +451,212 @@ def analyze_matches():
 
         league_name = match["league"]["name"]
 
-        print(f"Checking {home_team} vs {away_team}")
-
         odds = get_odds(fixture_id)
 
         if not odds:
             continue
 
-        if not odds["home"]:
-            continue
-
-        if odds["home"] < MIN_ODDS:
-            continue
-
-        if odds["home"] > MAX_ODDS:
-            continue
-
-        home_form = get_team_form(
-            match["teams"]["home"]["id"]
-        )
-
-        away_form = get_team_form(
-            match["teams"]["away"]["id"]
-        )
+        home_form = get_team_form(match["teams"]["home"]["id"])
+        away_form = get_team_form(match["teams"]["away"]["id"])
 
         home_xg = (
-            (home_form["attack"] * 1.15)
-            - (away_form["defense"] * 0.85)
+            (home_form["attack"] * 1.20)
+            - (away_form["defense"] * 0.80)
+            + 0.35
         )
 
         away_xg = (
-            (away_form["attack"] * 1.00)
+            (away_form["attack"] * 1.05)
             - (home_form["defense"] * 0.75)
         )
 
-        home_xg = max(0.4, home_xg)
-        away_xg = max(0.4, away_xg)
+        home_xg = max(0.5, home_xg)
+        away_xg = max(0.5, away_xg)
+
+        total_xg = home_xg + away_xg
 
         home_prob, draw_prob, away_prob = (
-            calculate_match_probs(
-                home_xg,
-                away_xg
-            )
+            calculate_match_probs(home_xg, away_xg)
         )
 
-        edge = calculate_edge(
-            home_prob,
-            odds["home"]
+        over25_prob = over25_probability(home_xg, away_xg)
+
+        btts_prob = btts_probability(home_xg, away_xg)
+
+        # =====================================================
+        # HOME WIN
+        # =====================================================
+
+        if odds["home"]:
+
+            if MIN_ODDS <= odds["home"] <= MAX_ODDS:
+
+                edge = calculate_edge(
+                    home_prob,
+                    odds["home"]
+                )
+
+                if edge >= MIN_EDGE:
+
+                    form = (
+                        home_form["wins"]
+                        - away_form["wins"]
+                        + 0.5
+                    )
+
+                    score = calculate_score(
+                        edge,
+                        form,
+                        total_xg,
+                        odds["home"]
+                    )
+
+                    all_picks.append({
+                        "market": "Home Win",
+                        "match": f"{home_team} vs {away_team}",
+                        "league": league_name,
+                        "probability": home_prob,
+                        "odds": odds["home"],
+                        "edge": edge,
+                        "score": score,
+                        "xg": total_xg
+                    })
+
+        # =====================================================
+        # OVER 2.5
+        # =====================================================
+
+        if odds["over25"]:
+
+            if MIN_ODDS <= odds["over25"] <= MAX_ODDS:
+
+                edge = calculate_edge(
+                    over25_prob,
+                    odds["over25"]
+                )
+
+                if edge >= MIN_EDGE and total_xg >= 2.6:
+
+                    score = calculate_score(
+                        edge,
+                        0.7,
+                        total_xg,
+                        odds["over25"]
+                    )
+
+                    all_picks.append({
+                        "market": "Over 2.5",
+                        "match": f"{home_team} vs {away_team}",
+                        "league": league_name,
+                        "probability": over25_prob,
+                        "odds": odds["over25"],
+                        "edge": edge,
+                        "score": score,
+                        "xg": total_xg
+                    })
+
+        # =====================================================
+        # BTTS
+        # =====================================================
+
+        if odds["btts"]:
+
+            if MIN_ODDS <= odds["btts"] <= MAX_ODDS:
+
+                edge = calculate_edge(
+                    btts_prob,
+                    odds["btts"]
+                )
+
+                if edge >= MIN_EDGE:
+
+                    if home_xg >= 1.1 and away_xg >= 1.0:
+
+                        score = calculate_score(
+                            edge,
+                            0.7,
+                            total_xg,
+                            odds["btts"]
+                        )
+
+                        all_picks.append({
+                            "market": "BTTS",
+                            "match": f"{home_team} vs {away_team}",
+                            "league": league_name,
+                            "probability": btts_prob,
+                            "odds": odds["btts"],
+                            "edge": edge,
+                            "score": score,
+                            "xg": total_xg
+                        })
+
+    # =========================================================
+    # TOP PICKS
+    # =========================================================
+
+    all_picks.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    best_picks = all_picks[:MAX_DAILY_PICKS]
+
+    if not best_picks:
+
+        print("No hay picks de calidad")
+
+        return
+
+    send_telegram(
+        "🔥 <b>TOP PICKS DEL DIA</b> 🔥"
+    )
+
+    for index, pick in enumerate(best_picks, start=1):
+
+        stake_percent = kelly(
+            pick["probability"],
+            pick["odds"]
         )
 
-        if edge >= MIN_EDGE:
+        stake = round(
+            BANKROLL * stake_percent,
+            2
+        )
 
-            stake_percent = kelly(
-                home_prob,
-                odds["home"]
-            )
+        message = (
+            f"🔥 <b>TOP PICK #{index}</b>\n\n"
+            f"⚽ {pick['match']}\n"
+            f"🏆 {pick['league']}\n\n"
+            f"✅ Mercado: {pick['market']}\n"
+            f"💰 Cuota: {pick['odds']}\n"
+            f"📈 Probabilidad: "
+            f"{round(pick['probability']*100,2)}%\n"
+            f"💎 Edge: "
+            f"{round(pick['edge']*100,2)}%\n"
+            f"📊 xG Total: "
+            f"{round(pick['xg'],2)}\n"
+            f"🏅 Score: "
+            f"{pick['score']}/100\n"
+            f"💵 Stake: €{stake}"
+        )
 
-            stake = round(
-                BANKROLL * stake_percent,
-                2
-            )
+        send_telegram(message)
 
-            msg = (
-                f"🔥 <b>VALUE BET DETECTADA</b>\n\n"
-                f"⚽ {home_team} vs {away_team}\n"
-                f"🏆 {league_name}\n\n"
-                f"✅ Pick: Gana Local\n"
-                f"💰 Cuota: {odds['home']}\n"
-                f"📈 Probabilidad: "
-                f"{round(home_prob*100,2)}%\n"
-                f"💎 Edge: "
-                f"{round(edge*100,2)}%\n"
-                f"💵 Stake: €{stake}\n"
-                f"📊 xG: "
-                f"{round(home_xg,2)} - "
-                f"{round(away_xg,2)}"
-            )
+        save_pick([
+            now.strftime("%Y-%m-%d"),
+            pick["match"],
+            pick["league"],
+            pick["market"],
+            pick["odds"],
+            round(pick["probability"] * 100, 2),
+            round(pick["edge"] * 100, 2),
+            pick["score"],
+            stake
+        ])
 
-            send_telegram(msg)
+        time.sleep(2)
 
-            save_pick([
-                now.strftime("%Y-%m-%d"),
-                f"{home_team} vs {away_team}",
-                league_name,
-                "Home Win",
-                odds["home"],
-                round(home_prob * 100, 2),
-                round(edge * 100, 2),
-                stake
-            ])
-
-            print(f"✅ VALUE FOUND: {home_team}")
-
-            picks += 1
-
-    print(f"📊 Partidos analizados: {total}")
-    print(f"🔥 Picks enviadas: {picks}")
+    print("TOP 5 enviadas correctamente")
 
 # =========================================================
 # LOOP
@@ -489,11 +664,10 @@ def analyze_matches():
 
 if __name__ == "__main__":
 
-    print("🚀 BOT INICIADO")
+    print("BOT SEMIPRO INICIADO")
 
     send_telegram(
-        "🚀 Bot iniciado correctamente "
-        "(Horario Madrid)"
+        "🚀 Bot semiprofesional iniciado"
     )
 
     while True:
@@ -502,24 +676,80 @@ if __name__ == "__main__":
 
             analyze_matches()
 
-            print(
-                f"⏳ Esperando "
-                f"{SCAN_INTERVAL/60} minutos..."
-            )
+            print("Esperando siguiente escaneo...")
 
             time.sleep(SCAN_INTERVAL)
 
         except KeyboardInterrupt:
 
-            print("🛑 Bot detenido")
+            print("Bot detenido")
+
             break
 
         except Exception as e:
 
-            print(f"❌ Critical Error: {e}")
+            print(f"Critical Error: {e}")
 
             send_telegram(
                 f"❌ Error crítico:\n{e}"
             )
 
             time.sleep(60)
+```
+
+# RECOMENDACIONES IMPORTANTES
+
+## Antes de usar:
+
+1. Cambia:
+
+* TU_API_KEY
+* TU_TELEGRAM_TOKEN
+* TU_CHAT_ID
+
+2. Instala:
+
+```bash
+pip install requests
+```
+
+3. Ejecuta:
+
+```bash
+python bot.py
+```
+
+# QUÉ HACE ESTE BOT
+
+✅ Analiza Top 5 ligas + MLS + Brasil
+
+✅ Analiza:
+
+* Home Win
+* Over 2.5
+* BTTS
+
+✅ Filtra apuestas basura
+
+✅ Envía SOLO las 5 mejores del día
+
+✅ Usa score inteligente
+
+✅ Usa Poisson
+
+✅ Usa gestión bankroll
+
+✅ Guarda histórico CSV
+
+✅ Funciona con horario Madrid
+
+# CONSEJO IMPORTANTE
+
+Aunque el modelo es mucho más serio que un bot amateur, lo ideal es hacer:
+
+* backtesting
+* CLV
+* análisis de yield
+* revisión mensual
+
+antes de meter stakes grandes.
