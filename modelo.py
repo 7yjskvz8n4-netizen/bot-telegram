@@ -2,9 +2,10 @@ import requests
 import math
 import sqlite3
 import time
-from datetime import datetime
+import json
+import os
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import random
 
 # =========================
 # CONFIG
@@ -17,22 +18,36 @@ CHAT_ID = "1335805552"
 BASE_URL = "https://v3.football.api-sports.io"
 TIMEZONE = ZoneInfo("Europe/Madrid")
 
-BANKROLL = 100
+BANKROLL = 50
+MAX_DAILY_PICKS = 7
 
-# valores iniciales (se ajustan solos)
 MIN_ODDS = 1.42
 MAX_ODDS = 2.30
-MAX_PICKS = 7
-
-BASE_EDGE = 0.04
+BASE_EDGE = 0.05
 
 HEADERS = {"x-apisports-key": API_KEY}
+
+# =========================
+# LIGAS
+# =========================
+
+ALLOWED_LEAGUES = {
+    13, 11, 71, 128, 103, 113,
+    244, 165, 333, 866, 98, 292
+}
+
+# =========================
+# CACHE
+# =========================
+
+CACHE_FILE = "fixtures_cache.json"
+CACHE_MINUTES = 60
 
 # =========================
 # DB
 # =========================
 
-conn = sqlite3.connect("ml_bot.db")
+conn = sqlite3.connect("bot_v2.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -42,12 +57,23 @@ timestamp TEXT,
 fixture_id INTEGER,
 match TEXT,
 league TEXT,
+market TEXT,
+selection TEXT,
 odds REAL,
 prob REAL,
 edge REAL,
 stake REAL,
 result TEXT,
 profit REAL
+)
+""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS sent_picks (
+fixture_id INTEGER,
+market TEXT,
+date TEXT,
+PRIMARY KEY (fixture_id, market, date)
 )
 """)
 
@@ -68,27 +94,150 @@ def send(msg):
         pass
 
 # =========================
-# POISSON SIMPLE
+# BOT SCHEDULE
+# =========================
+
+def bot_active():
+    now = datetime.now(TIMEZONE)
+    if now.weekday() < 5:
+        return 17 <= now.hour < 22
+    return 11 <= now.hour < 22
+
+# =========================
+# ANTI-SPAM
+# =========================
+
+def already_sent(fid, market):
+    today = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+    c.execute(
+        "SELECT 1 FROM sent_picks WHERE fixture_id=? AND market=? AND date=?",
+        (fid, market, today)
+    )
+    return c.fetchone() is not None
+
+
+def mark_sent(fid, market):
+    today = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+    c.execute(
+        "INSERT OR IGNORE INTO sent_picks VALUES (?,?,?)",
+        (fid, market, today)
+    )
+    conn.commit()
+
+# =========================
+# CACHE FIXTURES
+# =========================
+
+def get_matches():
+    try:
+        if os.path.exists(CACHE_FILE):
+            age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))
+            if age < timedelta(minutes=CACHE_MINUTES):
+                return json.load(open(CACHE_FILE))
+
+        date = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
+
+        r = requests.get(
+            f"{BASE_URL}/fixtures",
+            headers=HEADERS,
+            params={"date": date}
+        )
+
+        data = r.json().get("response", [])
+
+        with open(CACHE_FILE, "w") as f:
+            json.dump(data, f)
+
+        return data
+
+    except:
+        return []
+
+# =========================
+# POISSON CORE
 # =========================
 
 def poisson(lmbda, k):
     return (math.exp(-lmbda) * lmbda ** k) / math.factorial(k)
 
+
 def match_prob(h, a):
-    home = 0
+    home = draw = away = 0
+
     for i in range(6):
         for j in range(6):
             p = poisson(h, i) * poisson(a, j)
             if i > j:
                 home += p
-    return home
+            elif i == j:
+                draw += p
+            else:
+                away += p
+
+    return home, draw, away
 
 # =========================
-# XG (placeholder)
+# EXPECTED GOALS MODEL
 # =========================
 
-def get_xg():
-    return 1.4, 1.1
+def expected_goals(home_avg, away_avg, home_conc, away_conc):
+    home_xg = (home_avg + away_conc) / 2
+    away_xg = (away_avg + home_conc) / 2
+    return home_xg, away_xg
+
+# =========================
+# TEAM STRENGTH
+# =========================
+
+def team_strength(stats):
+
+    gf = float(stats["goals"]["for"]["average"]["total"])
+    ga = float(stats["goals"]["against"]["average"]["total"])
+    form = stats["fixtures"]["wins"]["total"] / max(stats["fixtures"]["played"]["total"], 1)
+
+    return gf, ga, form
+
+# =========================
+# ODDS
+# =========================
+
+def get_odds(fid):
+    try:
+        r = requests.get(
+            f"{BASE_URL}/odds",
+            headers=HEADERS,
+            params={"fixture": fid}
+        )
+
+        data = r.json().get("response", [])
+        if not data:
+            return None
+
+        bets = data[0]["bookmakers"][0]["bets"]
+
+        odds = {}
+
+        for b in bets:
+
+            # 1X2
+            if b["name"] == "Match Winner":
+                for v in b["values"]:
+                    odds[v["value"]] = float(v["odd"])
+
+            # BTTS
+            if b["name"] == "Both Teams To Score":
+                for v in b["values"]:
+                    odds[v["value"]] = float(v["odd"])
+
+            # Over/Under
+            if "Goals Over/Under" in b["name"]:
+                for v in b["values"]:
+                    odds[v["value"]] = float(v["odd"])
+
+        return odds
+
+    except:
+        return None
 
 # =========================
 # EDGE
@@ -98,164 +247,148 @@ def edge(prob, odds):
     return prob - (1 / odds)
 
 # =========================
-# DATA
-# =========================
-
-def get_matches():
-    try:
-        today = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
-        r = requests.get(
-            f"{BASE_URL}/fixtures",
-            headers=HEADERS,
-            params={"date": today}
-        )
-        return r.json().get("response", [])
-    except:
-        return []
-
-def get_odds(fid):
-    try:
-        r = requests.get(
-            f"{BASE_URL}/odds",
-            headers=HEADERS,
-            params={"fixture": fid}
-        )
-        data = r.json().get("response", [])
-        if not data:
-            return None
-
-        bets = data[0]["bookmakers"][0]["bets"]
-        for b in bets:
-            if b["name"] == "Match Winner":
-                for v in b["values"]:
-                    if v["value"] == "Home":
-                        return float(v["odd"])
-        return None
-    except:
-        return None
-
-# =========================
-# ML SIMPLE (AUTO AJUSTE)
-# =========================
-
-def get_stats():
-    c.execute("SELECT odds, edge, profit FROM picks WHERE result IS NOT NULL")
-    rows = c.fetchall()
-
-    wins = [r for r in rows if r[2] and r[2] > 0]
-
-    if len(rows) < 20:
-        return {
-            "edge_adjust": 0,
-            "odds_bias": 0
-        }
-
-    avg_edge_wins = sum([r[1] for r in wins]) / max(len(wins), 1)
-
-    # si el sistema gana poco → subir exigencia
-    if len(wins) / len(rows) < 0.45:
-        return {"edge_adjust": +0.01, "odds_bias": +0.05}
-
-    # si gana bien → relajamos
-    if len(wins) / len(rows) > 0.55:
-        return {"edge_adjust": -0.005, "odds_bias": -0.03}
-
-    return {"edge_adjust": 0, "odds_bias": 0}
-
-# =========================
-# DECISIÓN ADAPTATIVA
-# =========================
-
-def adaptive_edge(base, stats):
-    return max(0.02, base + stats["edge_adjust"])
-
-def adaptive_odds(min_odds, stats):
-    return max(1.35, min_odds + stats["odds_bias"])
-
-# =========================
-# SAVE
-# =========================
-
-def save(p):
-    c.execute("""
-        INSERT INTO picks VALUES (NULL,?,?,?,?,?,?,?,?,?)
-    """, p)
-    conn.commit()
-
-# =========================
-# RUN
+# MAIN
 # =========================
 
 def run():
 
-    stats = get_stats()
-
-    min_odds = adaptive_odds(MIN_ODDS, stats)
-    min_edge = adaptive_edge(BASE_EDGE, stats)
+    if not bot_active():
+        return
 
     matches = get_matches()
-    picks = []
+
+    picks_today = 0
 
     for m in matches:
 
+        if picks_today >= MAX_DAILY_PICKS:
+            break
+
         fid = m["fixture"]["id"]
+        league = m["league"]["id"]
+
+        if league not in ALLOWED_LEAGUES:
+            continue
+
         home = m["teams"]["home"]["name"]
         away = m["teams"]["away"]["name"]
-        league = m["league"]["name"]
 
         odds = get_odds(fid)
         if not odds:
             continue
 
-        if odds < min_odds or odds > MAX_ODDS:
+        try:
+            home_stats = get_team_stats(league, m["teams"]["home"]["id"])
+            away_stats = get_team_stats(league, m["teams"]["away"]["id"])
+        except:
             continue
 
-        hxg, axg = get_xg()
-        prob = match_prob(hxg, axg)
+        # =========================
+        # BUILD STRENGTH
+        # =========================
 
-        e = edge(prob, odds)
-        if e < min_edge:
-            continue
+        h_gf, h_ga, _ = team_strength(home_stats)
+        a_gf, a_ga, _ = team_strength(away_stats)
 
-        stake = BANKROLL * 0.02
-        profit = 0
+        hxg, axg = expected_goals(h_gf, a_gf, h_ga, a_ga)
 
-        picks.append([
-            datetime.now().isoformat(),
-            fid,
-            f"{home} vs {away}",
-            league,
-            odds,
-            prob,
-            e,
-            stake,
-            "",
-            profit
-        ])
+        home_p, draw_p, away_p = match_prob(hxg, axg)
 
-    picks = sorted(picks, key=lambda x: x[6], reverse=True)[:MAX_PICKS]
+        # =========================
+        # 1X2 HOME
+        # =========================
 
-    for p in picks:
-        save(p)
+        if "Home" in odds and not already_sent(fid, "1X2_HOME"):
 
-        send(
-            f"🤖 ML PICK\n"
-            f"⚽ {p[2]}\n"
-            f"💰 {p[4]}\n"
-            f"📊 Edge: {round(p[6]*100,2)}%\n"
-            f"🧠 Auto-edge activo"
-        )
+            p = home_p
+            o = odds["Home"]
+
+            if MIN_ODDS <= o <= MAX_ODDS and edge(p, o) > BASE_EDGE:
+
+                send(f"""
+⚽ {home} vs {away}
+📊 1X2 HOME
+💰 {o}
+📈 Edge: {round(edge(p,o)*100,2)}%
+""")
+
+                mark_sent(fid, "1X2_HOME")
+                picks_today += 1
+
+        # =========================
+        # OVER 2.5
+        # =========================
+
+        total_goals = hxg + axg
+
+        if "Over 2.5" in odds and not already_sent(fid, "OVER_2.5"):
+
+            over_prob = 1 if total_goals > 3 else 0.6
+
+            o = odds["Over 2.5"]
+
+            if edge(over_prob, o) > BASE_EDGE:
+
+                send(f"""
+⚽ {home} vs {away}
+📊 OVER 2.5
+💰 {o}
+📈 Edge: {round(edge(over_prob,o)*100,2)}%
+""")
+
+                mark_sent(fid, "OVER_2.5")
+                picks_today += 1
+
+        # =========================
+        # BTTS
+        # =========================
+
+        if "Yes" in odds and not already_sent(fid, "BTTS"):
+
+            btts_prob = 0.5 if hxg > 1 and axg > 1 else 0.35
+
+            o = odds["Yes"]
+
+            if edge(btts_prob, o) > BASE_EDGE:
+
+                send(f"""
+⚽ {home} vs {away}
+📊 BTTS YES
+💰 {o}
+📈 Edge: {round(edge(btts_prob,o)*100,2)}%
+""")
+
+                mark_sent(fid, "BTTS")
+                picks_today += 1
+
+# =========================
+# TEAM STATS API
+# =========================
+
+def get_team_stats(league, team):
+
+    r = requests.get(
+        f"{BASE_URL}/teams/statistics",
+        headers=HEADERS,
+        params={
+            "league": league,
+            "season": datetime.now().year,
+            "team": team
+        }
+    )
+
+    return r.json()["response"]
 
 # =========================
 # LOOP
 # =========================
 
-send("🚀 BOT ML AUTO-OPTIMIZADO INICIADO")
+send("🚀 V2.2 BOT INICIADO")
 
 while True:
     try:
         run()
-        time.sleep(1800)
+        time.sleep(3600)
     except Exception as e:
-        send(f"Error: {e}")
+        send(f"ERROR: {e}")
         time.sleep(60)
