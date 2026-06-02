@@ -18,7 +18,28 @@ MAX_PICKS = 5
 EDGE_MIN = 0.05
 
 # =========================
-# LIGAS (SOLO LAS QUE QUIERES)
+# TELEGRAM CONFIG
+# =========================
+
+TELEGRAM_TOKEN = "8647764005:AAEt7k4vsUpQLMuti6iqGIDBF7ngOJ9vqRA"
+CHAT_ID = "1335805552"
+
+def send(msg):
+
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg
+            },
+            timeout=10
+        )
+    except Exception as e:
+        print("Telegram error:", e)
+
+# =========================
+# LIGAS
 # =========================
 
 LEAGUES = {
@@ -50,14 +71,7 @@ ev REAL
 conn.commit()
 
 # =========================
-# LOG
-# =========================
-
-def send(msg):
-    print(msg)
-
-# =========================
-# TIMEOUT SAFE FETCH
+# FETCH SAFE
 # =========================
 
 def fetch(url):
@@ -74,23 +88,20 @@ def fetch(url):
         return None
 
 # =========================
-# MATCH SCRAPER
+# MATCHES
 # =========================
 
 def get_matches():
 
-    print("🚀 SCRAPING INICIADO")
+    send("🚀 SCRAPING INICIADO")
 
     matches = []
 
     for league, url in LEAGUES.items():
 
-        print(f"🌍 Liga: {league}")
-
         html = fetch(url)
 
         if not html:
-            print(f"❌ Fallo scraping: {league}")
             continue
 
         lines = html.split("\n")
@@ -115,7 +126,7 @@ def get_matches():
     return matches
 
 # =========================
-# CLEAN MATCH
+# CLEAN
 # =========================
 
 def clean_match(text):
@@ -135,7 +146,7 @@ def clean_match(text):
         return None, None
 
 # =========================
-# MODEL (POISSON SIMPLE)
+# MODEL
 # =========================
 
 def poisson(lmbda, k):
@@ -161,15 +172,11 @@ def probs(hxg, axg):
 
     return home/total, draw/total, away/total
 
-# =========================
-# XG SIMPLE
-# =========================
-
 def xg(team):
     return 1.4, 1.1
 
 # =========================
-# ODDS (SIMULADO)
+# ODDS
 # =========================
 
 def get_odds(home, away):
@@ -221,7 +228,7 @@ def save(home, away, league, prob, odds, stake, ev):
 
 def run():
 
-    send("🚀 BOT 3 LIGAS INICIADO")
+    send("🚀 BOT INICIADO")
 
     matches = get_matches()
 
@@ -270,9 +277,9 @@ def run():
     send("✅ CICLO COMPLETADO")
 
 # =========================
-# START SAFE (NO FREEZE)
+# START TEST TELEGRAM
 # =========================
 
-print("🚀 BOT INICIADO")
+send("🧪 TEST TELEGRAM OK")
 
 run()
