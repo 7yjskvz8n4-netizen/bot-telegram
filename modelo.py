@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 # =========================
 
 API_KEY = "b9bb7b48b07befece1272eb59c391bea"
-TELEGRAM_TOKEN = "8510764547:AAE9I3xG1biU3Wj76eaDEx5Ruhqs40_pNPE"
+TELEGRAM_TOKEN = "8647764005:AAEt7k4vsUpQLMuti6iqGIDBF7ngOJ9vqRA"
 CHAT_ID = "1335805552"
 
 BASE_URL = "https://v3.football.api-sports.io"
