@@ -228,9 +228,10 @@ def strength(stats):
 
 def get_fixtures():
 
-   print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
+print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
 send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
-    
+
+
 # =========================
 # ODDS
 # =========================
