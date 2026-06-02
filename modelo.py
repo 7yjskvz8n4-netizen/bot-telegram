@@ -14,29 +14,25 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 TZ = ZoneInfo("Europe/Madrid")
 
-MAX_PICKS = 5
-EDGE_MIN = 0.05
+MAX_PICKS = 5  # 🔥 menos picks, más calidad
+EDGE_MIN = 0.03
 
 # =========================
-# TELEGRAM CONFIG
+# TELEGRAM
 # =========================
 
 TELEGRAM_TOKEN = "8647764005:AAEt7k4vsUpQLMuti6iqGIDBF7ngOJ9vqRA"
 CHAT_ID = "1335805552"
 
 def send(msg):
-
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={
-                "chat_id": CHAT_ID,
-                "text": msg
-            },
+            data={"chat_id": CHAT_ID, "text": msg},
             timeout=10
         )
-    except Exception as e:
-        print("Telegram error:", e)
+    except:
+        pass
 
 # =========================
 # LIGAS
@@ -44,7 +40,7 @@ def send(msg):
 
 LEAGUES = {
     "mls": "https://www.espn.com/soccer/league/_/name/usa.1",
-    "brazil_serie_a": "https://www.espn.com/soccer/league/_/name/bra.1",
+    "brazil": "https://www.espn.com/soccer/league/_/name/bra.1",
     "argentina": "https://www.espn.com/soccer/league/_/name/arg.1"
 }
 
@@ -52,11 +48,11 @@ LEAGUES = {
 # DB
 # =========================
 
-conn = sqlite3.connect("bot_ligas.db", check_same_thread=False)
+conn = sqlite3.connect("bot_v12.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS predictions (
+CREATE TABLE IF NOT EXISTS bets (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 home TEXT,
 away TEXT,
@@ -71,19 +67,15 @@ ev REAL
 conn.commit()
 
 # =========================
-# FETCH SAFE
+# FETCH
 # =========================
 
 def fetch(url):
-
     try:
         r = requests.get(url, headers=HEADERS, timeout=5)
-
         if r.status_code != 200:
             return None
-
         return r.text
-
     except:
         return None
 
@@ -104,9 +96,7 @@ def get_matches():
         if not html:
             continue
 
-        lines = html.split("\n")
-
-        for line in lines:
+        for line in html.split("\n"):
 
             if " vs " in line.lower():
 
@@ -116,7 +106,6 @@ def get_matches():
                 })
 
     if len(matches) == 0:
-
         matches = [
             {"league": "fallback", "match": "Inter Miami vs LA Galaxy"},
             {"league": "fallback", "match": "Flamengo vs Palmeiras"},
@@ -135,18 +124,15 @@ def clean_match(text):
         if "vs" not in text.lower():
             return None, None
 
-        parts = text.split("vs")
+        a, b = text.split("vs")
 
-        if len(parts) != 2:
-            return None, None
-
-        return parts[0].strip(), parts[1].strip()
+        return a.strip(), b.strip()
 
     except:
         return None, None
 
 # =========================
-# MODEL
+# MODEL (POISSON SIMPLE)
 # =========================
 
 def poisson(lmbda, k):
@@ -172,23 +158,22 @@ def probs(hxg, axg):
 
     return home/total, draw/total, away/total
 
+# =========================
+# XG SIMPLE
+# =========================
+
 def xg(team):
     return 1.4, 1.1
 
 # =========================
-# ODDS
+# ODDS (SIMULADO)
 # =========================
 
 def get_odds(home, away):
-
-    return {
-        "Home": 2.05,
-        "Draw": 3.10,
-        "Away": 3.60
-    }
+    return {"Home": 2.05, "Draw": 3.10, "Away": 3.60}
 
 # =========================
-# EV + KELLY
+# VALUE BET ENGINE V12
 # =========================
 
 def expected_value(prob, odds):
@@ -199,15 +184,19 @@ def kelly(prob, odds):
     b = odds - 1
     q = 1 - prob
 
-    if b == 0:
+    if b <= 0:
         return 0
 
     k = (b * prob - q) / b
 
-    return max(0, min(k, 0.2))
+    return max(0, min(k, 0.15))  # 🔥 conservador
 
-def valid(ev, stake):
-    return ev > 0 and stake > 0
+def is_good_bet(prob, odds):
+
+    implied = 1 / odds
+    edge = prob - implied
+
+    return edge > EDGE_MIN
 
 # =========================
 # SAVE
@@ -216,7 +205,7 @@ def valid(ev, stake):
 def save(home, away, league, prob, odds, stake, ev):
 
     c.execute("""
-    INSERT INTO predictions (home, away, league, prob, odds, stake, ev)
+    INSERT INTO bets (home, away, league, prob, odds, stake, ev)
     VALUES (?,?,?,?,?,?,?)
     """, (home, away, league, prob, odds, stake, ev))
 
@@ -228,7 +217,7 @@ def save(home, away, league, prob, odds, stake, ev):
 
 def run():
 
-    send("🚀 BOT INICIADO")
+    send("🚀 V12 VALUE BET INICIADO")
 
     matches = get_matches()
 
@@ -236,10 +225,9 @@ def run():
 
     picks = 0
 
-    for m in matches[:20]:
+    for m in matches[:25]:
 
         home, away = clean_match(m["match"])
-
         if not home or not away:
             continue
 
@@ -252,10 +240,13 @@ def run():
 
         odds = get_odds(home, away)
 
-        ev = expected_value(ph, odds["Home"])
-        stake = kelly(ph, odds["Home"])
+        if not is_good_bet(ph, odds["Home"]):
+            continue
 
-        if valid(ev, stake):
+        ev = expected_value(ph, odds["Home"])
+        stake = min(kelly(ph, odds["Home"]), 0.10)
+
+        if ev > 0.03 and stake > 0.02:
 
             save(home, away, league, ph, odds["Home"], stake, ev)
 
@@ -277,9 +268,8 @@ def run():
     send("✅ CICLO COMPLETADO")
 
 # =========================
-# START TEST TELEGRAM
+# START
 # =========================
 
 send("🧪 TEST TELEGRAM OK")
-
 run()
