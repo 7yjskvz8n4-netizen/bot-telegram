@@ -12,22 +12,18 @@ from zoneinfo import ZoneInfo
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
+TZ = ZoneInfo("Europe/Madrid")
+
 MAX_PICKS = 5
 EDGE_MIN = 0.05
 
-TZ = ZoneInfo("Europe/Madrid")
-
 # =========================
-# LIGAS
+# LIGAS (SOLO LAS QUE QUIERES)
 # =========================
 
 LEAGUES = {
-    "brazil": "https://www.espn.com/soccer/league/_/name/bra.1",
     "mls": "https://www.espn.com/soccer/league/_/name/usa.1",
-    "japan": "https://www.espn.com/soccer/league/_/name/jpn.1",
-    "korea": "https://www.espn.com/soccer/league/_/name/kor.1",
-    "norway": "https://www.espn.com/soccer/league/_/name/nor.1",
-    "sweden": "https://www.espn.com/soccer/league/_/name/swe.1",
+    "brazil_serie_a": "https://www.espn.com/soccer/league/_/name/bra.1",
     "argentina": "https://www.espn.com/soccer/league/_/name/arg.1"
 }
 
@@ -35,7 +31,7 @@ LEAGUES = {
 # DB
 # =========================
 
-conn = sqlite3.connect("v11_ligues.db", check_same_thread=False)
+conn = sqlite3.connect("bot_ligas.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -54,28 +50,20 @@ ev REAL
 conn.commit()
 
 # =========================
-# TELEGRAM (LOG)
+# LOG
 # =========================
 
 def send(msg):
     print(msg)
 
 # =========================
-# TIME CONTROL
-# =========================
-
-def is_market_open():
-    now = datetime.now(TZ)
-    return 10 <= now.hour < 20
-
-# =========================
-# FETCH
+# TIMEOUT SAFE FETCH
 # =========================
 
 def fetch(url):
 
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(url, headers=HEADERS, timeout=5)
 
         if r.status_code != 200:
             return None
@@ -86,18 +74,23 @@ def fetch(url):
         return None
 
 # =========================
-# GET MATCHES BY LEAGUE
+# MATCH SCRAPER
 # =========================
 
 def get_matches():
+
+    print("🚀 SCRAPING INICIADO")
 
     matches = []
 
     for league, url in LEAGUES.items():
 
+        print(f"🌍 Liga: {league}")
+
         html = fetch(url)
 
         if not html:
+            print(f"❌ Fallo scraping: {league}")
             continue
 
         lines = html.split("\n")
@@ -111,12 +104,12 @@ def get_matches():
                     "match": line.strip()
                 })
 
-    # fallback seguro
     if len(matches) == 0:
 
         matches = [
-            {"league": "fallback", "match": "Barcelona vs Real Madrid"},
-            {"league": "fallback", "match": "Milan vs Inter"}
+            {"league": "fallback", "match": "Inter Miami vs LA Galaxy"},
+            {"league": "fallback", "match": "Flamengo vs Palmeiras"},
+            {"league": "fallback", "match": "Boca Juniors vs River Plate"}
         ]
 
     return matches
@@ -142,7 +135,7 @@ def clean_match(text):
         return None, None
 
 # =========================
-# POISSON MODEL
+# MODEL (POISSON SIMPLE)
 # =========================
 
 def poisson(lmbda, k):
@@ -176,15 +169,15 @@ def xg(team):
     return 1.4, 1.1
 
 # =========================
-# ODDS (PLACEHOLDER)
+# ODDS (SIMULADO)
 # =========================
 
 def get_odds(home, away):
 
     return {
-        "Home": 2.00,
-        "Draw": 3.20,
-        "Away": 3.80
+        "Home": 2.05,
+        "Draw": 3.10,
+        "Away": 3.60
     }
 
 # =========================
@@ -228,23 +221,9 @@ def save(home, away, league, prob, odds, stake, ev):
 
 def run():
 
-    send("🚀 V11.5 BOT LIGAS INICIADO")
+    send("🚀 BOT 3 LIGAS INICIADO")
 
-    raw = get_matches()
-
-    matches = []
-
-    for item in raw:
-
-        home, away = clean_match(item["match"])
-
-        if home and away:
-
-            matches.append({
-                "home": home,
-                "away": away,
-                "league": item["league"]
-            })
+    matches = get_matches()
 
     send(f"📊 Partidos encontrados: {len(matches)}")
 
@@ -252,8 +231,11 @@ def run():
 
     for m in matches[:20]:
 
-        home = m["home"]
-        away = m["away"]
+        home, away = clean_match(m["match"])
+
+        if not home or not away:
+            continue
+
         league = m["league"]
 
         hxg, _ = xg(home)
@@ -272,7 +254,7 @@ def run():
 
             send(f"""
 ⚽ {home} vs {away}
-🌍 Liga: {league}
+🌍 {league}
 
 💰 Cuota: {odds['Home']}
 📊 Prob: {round(ph,3)}
@@ -288,48 +270,9 @@ def run():
     send("✅ CICLO COMPLETADO")
 
 # =========================
-# LOOP 24/7 + HORARIO
+# START SAFE (NO FREEZE)
 # =========================
 
-def main_loop():
+print("🚀 BOT INICIADO")
 
-    while True:
-
-        now = datetime.now(TZ)
-
-        if 10 <= now.hour < 21:
-
-            run()
-            time.sleep(1800)  # cada 30 min
-
-        else:
-
-            print("⏳ Fuera de horario (20:00–10:00)")
-            time.sleep(300)
-
-# =========================
-# START
-# =========================
-
-def main_loop():
-
-    print("🚀 LOOP INICIADO")
-
-    while True:
-
-        try:
-            print("⏳ CHECK HORARIO")
-
-            now = datetime.now(TZ)
-            print("🕒 Hora:", now)
-
-            if 10 <= now.hour < 20:
-                print("🟢 ACTIVO")
-                run()
-            else:
-                print("🔴 FUERA DE HORARIO")
-
-        except Exception as e:
-            print("❌ ERROR:", str(e))
-
-        time.sleep(30)
+run()
