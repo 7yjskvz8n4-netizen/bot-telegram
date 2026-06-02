@@ -271,3 +271,11 @@ send("🚀 BOT INICIADO")
 while True:
     run()
     time.sleep(86400)
+import requests
+
+def test_updates():
+    r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates")
+    print(r.json())
+
+test_updates()
+
