@@ -60,44 +60,43 @@ def get_matches():
     urls = [
         "https://www.espn.com/soccer/scoreboard",
         "https://www.skysports.com/football/live-scores"
-    ]
 
-    matches = []
+        html = fetch(url)
+        if not html:
+            return [
+                "Milan vs Inter",
+                "Barcelona vs Real Madrid"
+            ]
 
-    for url in urls:
+        soup = BeautifulSoup(html, "html.parser")
 
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=10)
+        matches = []
 
-            if r.status_code != 200:
-                continue
+        text = soup.get_text(" ", strip=True)
 
-            text = r.text
+        if " vs " in text:
+            lines = text.split(" ")
 
-            # detección más flexible
-            if " vs " in text:
-                lines = text.split("\n")
+            for i in range(len(lines)):
+                if lines[i].lower() == "vs":
+                    if i > 0 and i < len(lines)-1:
+                        home = lines[i-1]
+                        away = lines[i+1]
+                        matches.append(f"{home} vs {away}")
 
-                for line in lines:
-                    if " vs " in line.lower():
-                        matches.append(line.strip())
-
-        except:
-            continue
-
-    # fallback mínimo si todo falla
-    if len(matches) == 0:
-
-        matches = [
-            "Barcelona vs Real Madrid",
-            "Arsenal vs Chelsea",
-            "Milan vs Inter"
-        ]
+        if len(matches) == 0:
+            matches = [
+                "Milan vs Inter",
+                "Barcelona vs Real Madrid"
+            ]
 
         return matches
 
     except:
-        return []
+        return [
+            "Milan vs Inter",
+            "Barcelona vs Real Madrid"
+        ]
 
     html = fetch(url)
     if not html:
