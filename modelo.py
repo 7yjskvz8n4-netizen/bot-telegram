@@ -311,4 +311,25 @@ def main_loop():
 # START
 # =========================
 
-main_loop()
+def main_loop():
+
+    print("🚀 LOOP INICIADO")
+
+    while True:
+
+        try:
+            print("⏳ CHECK HORARIO")
+
+            now = datetime.now(TZ)
+            print("🕒 Hora:", now)
+
+            if 10 <= now.hour < 20:
+                print("🟢 ACTIVO")
+                run()
+            else:
+                print("🔴 FUERA DE HORARIO")
+
+        except Exception as e:
+            print("❌ ERROR:", str(e))
+
+        time.sleep(30)
