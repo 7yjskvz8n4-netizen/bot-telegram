@@ -12,16 +12,30 @@ from zoneinfo import ZoneInfo
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-EDGE_MIN = 0.05
 MAX_PICKS = 5
+EDGE_MIN = 0.05
 
 TZ = ZoneInfo("Europe/Madrid")
+
+# =========================
+# LIGAS
+# =========================
+
+LEAGUES = {
+    "brazil": "https://www.espn.com/soccer/league/_/name/bra.1",
+    "mls": "https://www.espn.com/soccer/league/_/name/usa.1",
+    "japan": "https://www.espn.com/soccer/league/_/name/jpn.1",
+    "korea": "https://www.espn.com/soccer/league/_/name/kor.1",
+    "norway": "https://www.espn.com/soccer/league/_/name/nor.1",
+    "sweden": "https://www.espn.com/soccer/league/_/name/swe.1",
+    "argentina": "https://www.espn.com/soccer/league/_/name/arg.1"
+}
 
 # =========================
 # DB
 # =========================
 
-conn = sqlite3.connect("v10_system.db", check_same_thread=False)
+conn = sqlite3.connect("v11_ligues.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -29,6 +43,7 @@ CREATE TABLE IF NOT EXISTS predictions (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 home TEXT,
 away TEXT,
+league TEXT,
 prob REAL,
 odds REAL,
 stake REAL,
@@ -39,7 +54,7 @@ ev REAL
 conn.commit()
 
 # =========================
-# TELEGRAM (opcional)
+# TELEGRAM (LOG)
 # =========================
 
 def send(msg):
@@ -50,12 +65,11 @@ def send(msg):
 # =========================
 
 def is_market_open():
-
     now = datetime.now(TZ)
     return 10 <= now.hour < 20
 
 # =========================
-# FETCH SAFE
+# FETCH
 # =========================
 
 def fetch(url):
@@ -72,19 +86,14 @@ def fetch(url):
         return None
 
 # =========================
-# GET MATCHES
+# GET MATCHES BY LEAGUE
 # =========================
 
 def get_matches():
 
-    urls = [
-        "https://www.espn.com/soccer/scoreboard",
-        "https://www.skysports.com/football/live-scores"
-    ]
-
     matches = []
 
-    for url in urls:
+    for league, url in LEAGUES.items():
 
         html = fetch(url)
 
@@ -96,15 +105,18 @@ def get_matches():
         for line in lines:
 
             if " vs " in line.lower():
-                matches.append(line.strip())
+
+                matches.append({
+                    "league": league,
+                    "match": line.strip()
+                })
 
     # fallback seguro
     if len(matches) == 0:
 
         matches = [
-            "Barcelona vs Real Madrid",
-            "Milan vs Inter",
-            "Arsenal vs Chelsea"
+            {"league": "fallback", "match": "Barcelona vs Real Madrid"},
+            {"league": "fallback", "match": "Milan vs Inter"}
         ]
 
     return matches
@@ -124,10 +136,7 @@ def clean_match(text):
         if len(parts) != 2:
             return None, None
 
-        home = parts[0].strip()
-        away = parts[1].strip()
-
-        return home, away
+        return parts[0].strip(), parts[1].strip()
 
     except:
         return None, None
@@ -160,7 +169,7 @@ def probs(hxg, axg):
     return home/total, draw/total, away/total
 
 # =========================
-# SIMPLE XG
+# XG SIMPLE
 # =========================
 
 def xg(team):
@@ -204,39 +213,48 @@ def valid(ev, stake):
 # SAVE
 # =========================
 
-def save(home, away, prob, odds, stake, ev):
+def save(home, away, league, prob, odds, stake, ev):
 
     c.execute("""
-    INSERT INTO predictions (home, away, prob, odds, stake, ev)
-    VALUES (?,?,?,?,?,?)
-    """, (home, away, prob, odds, stake, ev))
+    INSERT INTO predictions (home, away, league, prob, odds, stake, ev)
+    VALUES (?,?,?,?,?,?,?)
+    """, (home, away, league, prob, odds, stake, ev))
 
     conn.commit()
 
 # =========================
-# CORE RUN
+# RUN
 # =========================
 
 def run():
 
-    send("🚀 BOT ACTIVO (VENTANA 10:00–20:00)")
+    send("🚀 V11.5 BOT LIGAS INICIADO")
 
     raw = get_matches()
 
     matches = []
 
-    for m in raw:
+    for item in raw:
 
-        home, away = clean_match(m)
+        home, away = clean_match(item["match"])
 
         if home and away:
-            matches.append((home, away))
+
+            matches.append({
+                "home": home,
+                "away": away,
+                "league": item["league"]
+            })
 
     send(f"📊 Partidos encontrados: {len(matches)}")
 
     picks = 0
 
-    for home, away in matches[:20]:
+    for m in matches[:20]:
+
+        home = m["home"]
+        away = m["away"]
+        league = m["league"]
 
         hxg, _ = xg(home)
         axg, _ = xg(away)
@@ -250,10 +268,11 @@ def run():
 
         if valid(ev, stake):
 
-            save(home, away, ph, odds["Home"], stake, ev)
+            save(home, away, league, ph, odds["Home"], stake, ev)
 
             send(f"""
 ⚽ {home} vs {away}
+🌍 Liga: {league}
 
 💰 Cuota: {odds['Home']}
 📊 Prob: {round(ph,3)}
@@ -269,22 +288,24 @@ def run():
     send("✅ CICLO COMPLETADO")
 
 # =========================
-# LOOP 24/7 CONTROLADO
+# LOOP 24/7 + HORARIO
 # =========================
 
 def main_loop():
 
     while True:
 
-        if is_market_open():
+        now = datetime.now(TZ)
+
+        if 10 <= now.hour < 20:
 
             run()
             time.sleep(1800)  # cada 30 min
 
         else:
 
-            print("⏳ Mercado cerrado (20:00–10:00)")
-            time.sleep(300)  # check cada 5 min
+            print("⏳ Fuera de horario (20:00–10:00)")
+            time.sleep(300)
 
 # =========================
 # START
