@@ -228,8 +228,17 @@ def strength(stats):
 
 def get_fixtures():
 
-print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
-send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
+    date = datetime.now(TZ).strftime("%Y-%m-%d")
+
+    r = requests.get(
+        f"{BASE_URL}/fixtures",
+        headers=HEADERS,
+        params={"date": date}
+    )
+
+    data = r.json()
+
+    return data.get("response", [])
 
 
 # =========================
@@ -290,7 +299,12 @@ def update_result(league_id, win):
 # =========================
 # RUN
 # =========================
+def run():
+    
+fixtures = get_fixtures()
 
+print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
+send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
 def run():
 
     print("RUN EJECUTADO")
