@@ -1,4 +1,11 @@
 import requests
+
+def get_updates():
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    r = requests.get(url)
+    print(r.json())
+
+get_updates()
 import math
 import sqlite3
 import time
