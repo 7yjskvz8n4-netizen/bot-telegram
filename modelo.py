@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 # =========================
 
 API_KEY = "b9bb7b48b07befece1272eb59c391bea"
-TELEGRAM_TOKEN = "8510764547:AAG1lOyQN5UoeiYEzIcuY-WZI_QykbbEwik"
+TELEGRAM_TOKEN = "8510764547:AAE9I3xG1biU3Wj76eaDEx5Ruhqs40_pNPE"
 CHAT_ID = "1335805552"
 
 BASE_URL = "https://v3.football.api-sports.io"
@@ -19,7 +19,6 @@ TZ = ZoneInfo("Europe/Madrid")
 MAX_CALLS = 100
 MAX_PICKS = 5
 TOP_N = 8
-
 BASE_EDGE = 0.03
 
 ACTIVE_LEAGUES = {13, 11, 71, 128, 103, 113, 244, 165, 866, 98, 292}
@@ -70,16 +69,20 @@ def safe_request(url, params=None):
     if api_calls >= MAX_CALLS:
         return None
 
-    r = requests.get(url, headers=HEADERS, params=params)
-    api_calls += 1
+    try:
+        r = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        api_calls += 1
 
-    if r.status_code != 200:
+        if r.status_code != 200:
+            return None
+
+        return r.json()
+
+    except:
         return None
 
-    return r.json()
-
 # =========================
-# 1. FIXTURES (CALL #1)
+# FIXTURES (CALL 1)
 # =========================
 
 def get_fixtures():
@@ -95,31 +98,25 @@ def get_fixtures():
     return data.get("response", [])
 
 # =========================
-# 2. QUICK SCORING (NO API)
+# SCORE (NO API)
 # =========================
 
 def score_fixture(f):
 
     league = f["league"]["id"]
-    home = f["teams"]["home"]["name"]
-    away = f["teams"]["away"]["name"]
 
     score = 0
 
     if league in ACTIVE_LEAGUES:
         score += 3
 
-    if home != away:
-        score += 1
-
-    # partidos más “normales” suelen ser mejores
     if f["fixture"]["status"]["long"] == "Not Started":
         score += 1
 
     return score
 
 # =========================
-# 3. GET ODDS (CALL #2 / #3)
+# ODDS (FIXED - NO data[0])
 # =========================
 
 def get_odds(fid):
@@ -132,16 +129,24 @@ def get_odds(fid):
     if not data:
         return None
 
-    for b in data[0]["bookmakers"]:
+    response = data.get("response", [])
+    if not response:
+        return None
 
-        if b["name"] != "Bet365":
+    bookmakers = response[0].get("bookmakers", [])
+
+    for b in bookmakers:
+
+        if b.get("name") != "Bet365":
             continue
 
         odds = {}
 
-        for bet in b["bets"]:
-            if bet["name"] == "Match Winner":
-                for v in bet["values"]:
+        for bet in b.get("bets", []):
+
+            if bet.get("name") == "Match Winner":
+
+                for v in bet.get("values", []):
                     odds[v["value"]] = float(v["odd"])
 
         return odds
@@ -149,7 +154,7 @@ def get_odds(fid):
     return None
 
 # =========================
-# 4. SIMPLE MODEL (Poisson básico estable)
+# POISSON SIMPLE
 # =========================
 
 def poisson(lmbda, k):
@@ -183,7 +188,7 @@ def edge(prob, odds):
     return prob - (1 / odds)
 
 # =========================
-# SAVE BET
+# SAVE
 # =========================
 
 def save(fid, league, prob):
@@ -195,7 +200,7 @@ def save(fid, league, prob):
     conn.commit()
 
 # =========================
-# RUN (3 CALL STRATEGY)
+# RUN
 # =========================
 
 def run():
@@ -203,29 +208,20 @@ def run():
     global api_calls
     api_calls = 0
 
-    send("🚀 V6 OPTIMIZADO INICIADO")
+    send("🚀 BOT V6 FIXED INICIADO")
 
-    # =====================
-    # CALL 1: FIXTURES
-    # =====================
+    # CALL 1
     fixtures = get_fixtures()
 
     send(f"📊 Partidos: {len(fixtures)}")
 
-    # =====================
-    # RANKING SIN API
-    # =====================
     ranked = sorted(fixtures, key=score_fixture, reverse=True)
-
     selected = ranked[:TOP_N]
 
     send(f"🎯 Seleccionados: {len(selected)}")
 
     picks = 0
 
-    # =====================
-    # CALLS 2-3: SOLO TOP
-    # =====================
     for f in selected:
 
         if api_calls >= MAX_CALLS:
@@ -237,11 +233,10 @@ def run():
         home = f["teams"]["home"]
         away = f["teams"]["away"]
 
-        odds = get_odds(fid)  # CALL CONTROLADO
+        odds = get_odds(fid)   # CALL 2/3
         if not odds:
             continue
 
-        # modelo simple estable (puedes mejorar luego con xG)
         ph, pd, pa = probs(0.55, 0.45)
 
         if "Home" in odds:
@@ -271,7 +266,7 @@ def run():
 # LOOP
 # =========================
 
-send("🚀 BOT V6 START")
+send("🚀 BOT INICIADO")
 
 while True:
     run()
