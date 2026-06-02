@@ -301,7 +301,7 @@ def update_result(league_id, win):
 # =========================
 def run():
     
-fixtures = get_fixtures()
+    fixtures = get_fixtures()
 
 print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
 send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
