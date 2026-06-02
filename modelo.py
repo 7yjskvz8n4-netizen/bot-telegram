@@ -302,12 +302,17 @@ def update_result(league_id, win):
 
 def run():
 
+    print("RUN EJECUTADO")
+
     if not bot_active():
+        print("BOT INACTIVO POR HORARIO")
         return
 
     update_league_filter()
 
     fixtures = get_fixtures()
+
+    print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
 
     picks = 0
 
@@ -361,6 +366,7 @@ def run():
 # LOOP
 # =========================
 
+print("BOT INICIADO")
 send("🚀 V2.3.1 AUTO LIGA CLEANER INICIADO")
 
 while True:
