@@ -3,21 +3,20 @@ import math
 import sqlite3
 from bs4 import BeautifulSoup
 
-
 # =========================
 # CONFIG
 # =========================
 
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
 EDGE_MIN = 0.05
 MAX_PICKS = 5
 
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
 # =========================
-# DB
+# DB (learning base)
 # =========================
 
-conn = sqlite3.connect("v10_system.db", check_same_thread=False)
+conn = sqlite3.connect("v10_clean.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -28,7 +27,6 @@ away TEXT,
 prob REAL,
 odds REAL,
 stake REAL,
-result INTEGER,
 ev REAL
 )
 """)
@@ -43,84 +41,83 @@ def send(msg):
     print(msg)
 
 # =========================
-# SCRAPER MATCHES
+# FETCH HTML SAFE
 # =========================
 
 def fetch(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
+
         if r.status_code != 200:
             return None
+
         return r.text
+
     except:
         return None
+
+# =========================
+# GET MATCHES (SCRAPER ESTABLE)
+# =========================
 
 def get_matches():
 
     urls = [
         "https://www.espn.com/soccer/scoreboard",
         "https://www.skysports.com/football/live-scores"
-
-        html = fetch(url)
-        if not html:
-            return [
-                "Milan vs Inter",
-                "Barcelona vs Real Madrid"
-            ]
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        matches = []
-
-        text = soup.get_text(" ", strip=True)
-
-        if " vs " in text:
-            lines = text.split(" ")
-
-            for i in range(len(lines)):
-                if lines[i].lower() == "vs":
-                    if i > 0 and i < len(lines)-1:
-                        home = lines[i-1]
-                        away = lines[i+1]
-                        matches.append(f"{home} vs {away}")
-
-        if len(matches) == 0:
-            matches = [
-                "Milan vs Inter",
-                "Barcelona vs Real Madrid"
-            ]
-
-        return matches
-
-    except:
-        return [
-            "Milan vs Inter",
-            "Barcelona vs Real Madrid"
-        ]
-
-    html = fetch(url)
-    if not html:
-        return []
-
-    soup = BeautifulSoup(html, "html.parser")
+    ]
 
     matches = []
 
-    for row in soup.find_all("tr"):
+    for url in urls:
 
-        text = row.get_text(" ", strip=True)
+        html = fetch(url)
+        if not html:
+            continue
 
-        if " - " in text and len(text) < 80:
-            matches.append(text)
+        text = html
+
+        if " vs " in text.lower():
+
+            lines = text.split("\n")
+
+            for line in lines:
+
+                if " vs " in line.lower():
+                    matches.append(line.strip())
+
+    # fallback si todo falla
+    if len(matches) == 0:
+
+        matches = [
+            "Barcelona vs Real Madrid",
+            "Milan vs Inter",
+            "Arsenal vs Chelsea"
+        ]
 
     return matches
+
+# =========================
+# CLEAN MATCH
+# =========================
 
 def clean_match(text):
 
     try:
-        parts = text.split("-")
-        if len(parts) >= 2:
-            return parts[0].strip(), parts[1].strip()
+        if "vs" not in text.lower():
+            return None, None
+
+        parts = text.split("vs")
+
+        if len(parts) != 2:
+            return None, None
+
+        home = parts[0].strip()
+        away = parts[1].strip()
+
+        if home and away:
+            return home, away
+
     except:
         pass
 
@@ -154,16 +151,15 @@ def probs(hxg, axg):
     return home/total, draw/total, away/total
 
 # =========================
-# SIMPLE XG MODEL (LOCAL)
+# XG SIMPLE MODEL
 # =========================
 
 def xg(team):
 
-    # base sin API (mejora con learning)
     return 1.4, 1.1
 
 # =========================
-# ODDS (PLACEHOLDER V10)
+# ODDS (PLACEHOLDER)
 # =========================
 
 def get_odds(home, away):
@@ -193,15 +189,14 @@ def kelly(prob, odds):
 
     return max(0, min(k, 0.2))
 
-def is_valid(ev, stake):
-
+def valid(ev, stake):
     return ev > 0 and stake > 0
 
 # =========================
-# LEARNING SYSTEM (V10 CORE)
+# SAVE
 # =========================
 
-def save_prediction(home, away, prob, odds, stake, ev):
+def save(home, away, prob, odds, stake, ev):
 
     c.execute("""
     INSERT INTO predictions (home, away, prob, odds, stake, ev)
@@ -210,41 +205,22 @@ def save_prediction(home, away, prob, odds, stake, ev):
 
     conn.commit()
 
-def model_bias():
-
-    c.execute("SELECT prob, result FROM predictions WHERE result IS NOT NULL")
-
-    data = c.fetchall()
-
-    if len(data) < 20:
-        return 1.0
-
-    error = 0
-
-    for p, r in data:
-        error += (p - r)
-
-    bias = error / len(data)
-
-    return max(0.85, min(1.15, 1 - bias))
-
-def adjust_prob(prob):
-    return prob * model_bias()
-
 # =========================
-# MAIN BOT
+# MAIN
 # =========================
 
 def run():
 
-    send("🚀 V10 FULL SYSTEM INICIADO")
+    send("🚀 MODELO LIMPIO INICIADO")
 
-    raw_matches = get_matches()
+    raw = get_matches()
 
     matches = []
 
-    for m in raw_matches:
+    for m in raw:
+
         home, away = clean_match(m)
+
         if home and away:
             matches.append((home, away))
 
@@ -259,16 +235,14 @@ def run():
 
         ph, pd, pa = probs(hxg, axg)
 
-        ph = adjust_prob(ph)
-
         odds = get_odds(home, away)
 
         ev = expected_value(ph, odds["Home"])
         stake = kelly(ph, odds["Home"])
 
-        if is_valid(ev, stake):
+        if valid(ev, stake):
 
-            save_prediction(home, away, ph, odds["Home"], stake, ev)
+            save(home, away, ph, odds["Home"], stake, ev)
 
             send(f"""
 ⚽ {home} vs {away}
@@ -284,7 +258,7 @@ def run():
             if picks >= MAX_PICKS:
                 break
 
-    send("✅ V10 COMPLETADO")
+    send("✅ SISTEMA LIMPIO EJECUTADO")
 
 # =========================
 # START
