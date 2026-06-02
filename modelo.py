@@ -264,4 +264,8 @@ def run():
 # START
 # =========================
 
-run()
+import time
+
+while True:
+    run()
+    time.sleep(3600)  # 1 vez por hora
