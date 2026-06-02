@@ -2,59 +2,45 @@ import requests
 import math
 import sqlite3
 import time
-import json
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # =========================
 # CONFIG
 # =========================
 
-API_KEY = "e93b17bb02fe486f1fa731494df8814c"
-TELEGRAM_TOKEN = "8510764547:AAHFpJ1_aPFdDDIYjVptLbxNgUAQh-dat7o"
+API_KEY = "b9bb7b48b07befece1272eb59c391bea"
+TELEGRAM_TOKEN = "8510764547:AAG1lOyQN5UoeiYEzIcuY-WZI_QykbbEwik"
 CHAT_ID = "1335805552"
 
 BASE_URL = "https://v3.football.api-sports.io"
 TZ = ZoneInfo("Europe/Madrid")
 
-BANKROLL = 50
-MAX_DAILY_PICKS = 7
+MAX_CALLS = 100
+MAX_PICKS = 5
+TOP_N = 8
 
-BASE_EDGE = 0.05
+BASE_EDGE = 0.03
+
+ACTIVE_LEAGUES = {13, 11, 71, 128, 103, 113, 244, 165, 866, 98, 292}
 
 HEADERS = {"x-apisports-key": API_KEY}
 
-# =========================
-# LIGAS INICIALES
-# =========================
-
-ACTIVE_LEAGUES = {
-    13, 11, 71, 128, 103, 113,
-    244, 165, 866, 98, 292
-}
+api_calls = 0
 
 # =========================
 # DB
 # =========================
 
-conn = sqlite3.connect("bot_v23_1.db", check_same_thread=False)
+conn = sqlite3.connect("bot_v6.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS league_stats (
-league_id INTEGER PRIMARY KEY,
-wins INTEGER DEFAULT 0,
-losses INTEGER DEFAULT 0
-)
-""")
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS sent (
-fixture_id INTEGER,
-market TEXT,
-date TEXT,
-PRIMARY KEY (fixture_id, market, date)
+CREATE TABLE IF NOT EXISTS bets (
+fixture_id INTEGER PRIMARY KEY,
+league_id INTEGER,
+prob REAL,
+result INTEGER
 )
 """)
 
@@ -75,118 +61,99 @@ def send(msg):
         pass
 
 # =========================
-# BOT TIME
+# SAFE REQUEST
 # =========================
 
-def bot_active():
-    return True
+def safe_request(url, params=None):
+    global api_calls
+
+    if api_calls >= MAX_CALLS:
+        return None
+
+    r = requests.get(url, headers=HEADERS, params=params)
+    api_calls += 1
+
+    if r.status_code != 200:
+        return None
+
+    return r.json()
 
 # =========================
-# LIGA FACTOR
+# 1. FIXTURES (CALL #1)
 # =========================
 
-def get_league_factor(league_id):
+def get_fixtures():
 
-    c.execute("SELECT wins, losses FROM league_stats WHERE league_id=?",
-              (league_id,))
+    data = safe_request(
+        f"{BASE_URL}/fixtures",
+        {"date": datetime.now(TZ).strftime("%Y-%m-%d")}
+    )
 
-    row = c.fetchone()
+    if not data:
+        return []
 
-    if not row:
-        return 1.0
-
-    w, l = row
-    total = w + l
-
-    if total < 15:
-        return 1.0
-
-    wr = w / total
-
-    if wr > 0.57:
-        return 1.10
-    elif wr > 0.52:
-        return 1.00
-    elif wr > 0.47:
-        return 0.90
-    else:
-        return 0.75
+    return data.get("response", [])
 
 # =========================
-# AUTO ELIMINACIÓN DE LIGAS MALAS
+# 2. QUICK SCORING (NO API)
 # =========================
 
-def update_league_filter():
+def score_fixture(f):
 
-    global ACTIVE_LEAGUES
+    league = f["league"]["id"]
+    home = f["teams"]["home"]["name"]
+    away = f["teams"]["away"]["name"]
 
-    new_active = set()
+    score = 0
 
-    for lid in ACTIVE_LEAGUES:
+    if league in ACTIVE_LEAGUES:
+        score += 3
 
-        c.execute("SELECT wins, losses FROM league_stats WHERE league_id=?", (lid,))
-        row = c.fetchone()
+    if home != away:
+        score += 1
 
-        if not row:
-            new_active.add(lid)
+    # partidos más “normales” suelen ser mejores
+    if f["fixture"]["status"]["long"] == "Not Started":
+        score += 1
+
+    return score
+
+# =========================
+# 3. GET ODDS (CALL #2 / #3)
+# =========================
+
+def get_odds(fid):
+
+    data = safe_request(
+        f"{BASE_URL}/odds",
+        {"fixture": fid}
+    )
+
+    if not data:
+        return None
+
+    for b in data[0]["bookmakers"]:
+
+        if b["name"] != "Bet365":
             continue
 
-        w, l = row
-        total = w + l
+        odds = {}
 
-        if total < 10:
-            new_active.add(lid)
-            continue
+        for bet in b["bets"]:
+            if bet["name"] == "Match Winner":
+                for v in bet["values"]:
+                    odds[v["value"]] = float(v["odd"])
 
-        wr = w / total
+        return odds
 
-        # ❌ elimina ligas malas automáticamente
-        if wr < 0.45:
-            continue
-
-        new_active.add(lid)
-
-    ACTIVE_LEAGUES = new_active
+    return None
 
 # =========================
-# EDGE
-# =========================
-
-def edge(prob, odds, league_id):
-
-    base = prob - (1 / odds)
-    return base * get_league_factor(league_id)
-
-# =========================
-# MARK SENT
-# =========================
-
-def sent(fid, market):
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-
-    c.execute("""
-        SELECT 1 FROM sent WHERE fixture_id=? AND market=? AND date=?
-    """, (fid, market, today))
-
-    return c.fetchone() is not None
-
-
-def mark(fid, market):
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-
-    c.execute("""
-        INSERT OR IGNORE INTO sent VALUES (?,?,?)
-    """, (fid, market, today))
-
-    conn.commit()
-
-# =========================
-# POISSON SIMPLE
+# 4. SIMPLE MODEL (Poisson básico estable)
 # =========================
 
 def poisson(lmbda, k):
     return (math.exp(-lmbda) * lmbda ** k) / math.factorial(k)
-
 
 def probs(h, a):
 
@@ -194,6 +161,7 @@ def probs(h, a):
 
     for i in range(6):
         for j in range(6):
+
             p = poisson(h, i) * poisson(a, j)
 
             if i > j:
@@ -203,188 +171,108 @@ def probs(h, a):
             else:
                 away += p
 
-    return home, draw, away
+    total = home + draw + away
+
+    return home/total, draw/total, away/total
 
 # =========================
-# XG SIMPLE
+# EDGE
 # =========================
 
-def xg(home, away):
-    return (home[0] + away[1]) / 2, (away[0] + home[1]) / 2
+def edge(prob, odds):
+    return prob - (1 / odds)
 
 # =========================
-# TEAM STRENGTH (simplificado)
+# SAVE BET
 # =========================
 
-def strength(stats):
-
-    gf = float(stats["goals"]["for"]["average"]["total"])
-    ga = float(stats["goals"]["against"]["average"]["total"])
-    return gf, ga
-
-# =========================
-# FIXTURES
-# =========================
-
-def get_fixtures():
-
-    date = datetime.now(TZ).strftime("%Y-%m-%d")
-
-    r = requests.get(
-        f"{BASE_URL}/fixtures",
-        headers=HEADERS,
-        params={"date": date}
-    )
-
-    data = r.json()
-
-    return data.get("response", [])
-
-
-# =========================
-# ODDS
-# =========================
-
-def get_odds(fid):
-
-    r = requests.get(
-        f"{BASE_URL}/odds",
-        headers=HEADERS,
-        params={"fixture": fid}
-    )
-
-    data = r.json().get("response", [])
-    if not data:
-        return None
-
-    odds = {}
-
-    for b in data[0]["bookmakers"][0]["bets"]:
-
-        if b["name"] == "Match Winner":
-            for v in b["values"]:
-                odds[v["value"]] = float(v["odd"])
-
-    return odds
-
-# =========================
-# LEAGUE UPDATE RESULT (manual futuro)
-# =========================
-
-def update_result(league_id, win):
-
-    c.execute("SELECT wins, losses FROM league_stats WHERE league_id=?", (league_id,))
-    row = c.fetchone()
-
-    if not row:
-        c.execute("INSERT INTO league_stats VALUES (?,0,0)", (league_id,))
-        conn.commit()
-        row = (0, 0)
-
-    w, l = row
-
-    if win:
-        w += 1
-    else:
-        l += 1
+def save(fid, league, prob):
 
     c.execute("""
-        UPDATE league_stats
-        SET wins=?, losses=?
-        WHERE league_id=?
-    """, (w, l, league_id))
+        INSERT OR REPLACE INTO bets VALUES (?,?,?,NULL)
+    """, (fid, league, prob))
 
     conn.commit()
 
 # =========================
-# RUN
+# RUN (3 CALL STRATEGY)
 # =========================
+
 def run():
 
-    print("RUN EJECUTADO")
+    global api_calls
+    api_calls = 0
 
+    send("🚀 V6 OPTIMIZADO INICIADO")
+
+    # =====================
+    # CALL 1: FIXTURES
+    # =====================
     fixtures = get_fixtures()
 
-    print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
-    send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
+    send(f"📊 Partidos: {len(fixtures)}")
+
+    # =====================
+    # RANKING SIN API
+    # =====================
+    ranked = sorted(fixtures, key=score_fixture, reverse=True)
+
+    selected = ranked[:TOP_N]
+
+    send(f"🎯 Seleccionados: {len(selected)}")
 
     picks = 0
 
-    for f in fixtures:
+    # =====================
+    # CALLS 2-3: SOLO TOP
+    # =====================
+    for f in selected:
 
-        if picks >= MAX_DAILY_PICKS:
+        if api_calls >= MAX_CALLS:
             break
 
-        league = f["league"]["id"]
-
-        if league not in ACTIVE_LEAGUES:
-            continue
-
         fid = f["fixture"]["id"]
+        league = f["league"]["id"]
 
         home = f["teams"]["home"]
         away = f["teams"]["away"]
 
-        odds = get_odds(fid)
+        odds = get_odds(fid)  # CALL CONTROLADO
         if not odds:
             continue
 
-        h_stats = strength(home)
-        a_stats = strength(away)
+        # modelo simple estable (puedes mejorar luego con xG)
+        ph, pd, pa = probs(0.55, 0.45)
 
-        hxg, axg = xg(h_stats, a_stats)
-
-        ph, pd, pa = probs(hxg, axg)
-
-        if "Home" in odds and not sent(fid, "HOME"):
+        if "Home" in odds:
 
             o = odds["Home"]
+            e = edge(ph, o)
 
-            e = edge(ph, o, league)
-
-            print(f"{home['name']} vs {away['name']} | Edge={round(e,3)}")
+            save(fid, league, ph)
 
             if e > BASE_EDGE:
 
                 send(f"""
 ⚽ {home['name']} vs {away['name']}
-💰 {o}
+💰 Cuota: {o}
 📈 Edge: {round(e*100,2)}%
 """)
 
-                mark(fid, "HOME")
                 picks += 1
-        # =========================
-        # PICK SIMPLE HOME
-        # =========================
 
-        if "Home" in odds and not sent(fid, "HOME"):
+                if picks >= MAX_PICKS:
+                    break
 
-            o = odds["Home"]
-
-            if edge(ph, o, league) > BASE_EDGE:
-
-                send(f"""
-⚽ {home['name']} vs {away['name']}
-📊 HOME WIN
-💰 {o}
-📈 Edge: {round(edge(ph,o,league)*100,2)}%
-""")
-
-                mark(fid, "HOME")
-                picks += 1
+    send(f"✅ Picks: {picks}")
+    send(f"🔌 API calls: {api_calls}")
 
 # =========================
 # LOOP
 # =========================
 
-print("BOT INICIADO")
-send("🚀 V2.3.1 AUTO LIGA CLEANER INICIADO")
+send("🚀 BOT V6 START")
 
 while True:
-    try:
-        run()
-        time.sleep(3600)
-    except Exception as e:
-        send(f"ERROR: {e}")
-        time.sleep(60)
+    run()
+    time.sleep(86400)
