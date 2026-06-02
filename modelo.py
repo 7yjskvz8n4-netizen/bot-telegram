@@ -79,10 +79,7 @@ def send(msg):
 # =========================
 
 def bot_active():
-    now = datetime.now(TZ)
-    if now.weekday() < 5:
-        return 17 <= now.hour < 22
-    return 11 <= now.hour < 22
+    return True
 
 # =========================
 # LIGA FACTOR
