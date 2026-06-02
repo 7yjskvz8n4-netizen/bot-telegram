@@ -1,7 +1,6 @@
 import requests
 import math
 import sqlite3
-import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -17,29 +16,25 @@ BASE_URL = "https://v3.football.api-sports.io"
 TZ = ZoneInfo("Europe/Madrid")
 
 MAX_CALLS = 100
+TOP_N = 10
 MAX_PICKS = 5
-TOP_N = 8
-BASE_EDGE = 0.03
-
-ACTIVE_LEAGUES = {13, 11, 71, 128, 103, 113, 244, 165, 866, 98, 292}
+EDGE_MIN = 0.05
 
 HEADERS = {"x-apisports-key": API_KEY}
 
 api_calls = 0
 
 # =========================
-# DB
+# DB (learning simple)
 # =========================
 
-conn = sqlite3.connect("bot_v6.db", check_same_thread=False)
+conn = sqlite3.connect("bot_v5.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS bets (
-fixture_id INTEGER PRIMARY KEY,
-league_id INTEGER,
-prob REAL,
-result INTEGER
+CREATE TABLE IF NOT EXISTS league_stats (
+league_id INTEGER PRIMARY KEY,
+score REAL DEFAULT 1
 )
 """)
 
@@ -82,7 +77,7 @@ def safe_request(url, params=None):
         return None
 
 # =========================
-# FIXTURES (CALL 1)
+# FIXTURES
 # =========================
 
 def get_fixtures():
@@ -98,25 +93,93 @@ def get_fixtures():
     return data.get("response", [])
 
 # =========================
-# SCORE (NO API)
+# LEAGUE LEARNING
 # =========================
 
-def score_fixture(f):
+def league_score(league_id):
 
-    league = f["league"]["id"]
+    c.execute("SELECT score FROM league_stats WHERE league_id=?", (league_id,))
+    row = c.fetchone()
 
-    score = 0
+    if not row:
+        return 1.0
 
-    if league in ACTIVE_LEAGUES:
-        score += 3
+    return row[0]
 
-    if f["fixture"]["status"]["long"] == "Not Started":
-        score += 1
+def update_league(league_id, win):
 
-    return score
+    score = league_score(league_id)
+
+    if win:
+        score *= 1.02
+    else:
+        score *= 0.98
+
+    c.execute("""
+    INSERT OR REPLACE INTO league_stats VALUES (?,?)
+    """, (league_id, score))
+
+    conn.commit()
 
 # =========================
-# ODDS (FIXED - NO data[0])
+# POISSON
+# =========================
+
+def poisson(lmbda, k):
+    return (math.exp(-lmbda) * lmbda ** k) / math.factorial(k)
+
+def probs(hxg, axg):
+
+    home = draw = away = 0
+
+    for i in range(6):
+        for j in range(6):
+
+            p = poisson(hxg, i) * poisson(axg, j)
+
+            if i > j:
+                home += p
+            elif i == j:
+                draw += p
+            else:
+                away += p
+
+    total = home + draw + away
+
+    return home/total, draw/total, away/total
+
+# =========================
+# XG REAL PROXY (MEJORADO)
+# =========================
+
+def xg_from_team(team_id):
+
+    data = safe_request(
+        f"{BASE_URL}/teams/statistics",
+        {"team": team_id, "season": 2024}
+    )
+
+    if not data or not data.get("response"):
+        return 1.2, 1.2
+
+    stats = data["response"]
+
+    gf = stats["goals"]["for"]["total"]["home"] or 0
+    ga = stats["goals"]["against"]["total"]["home"] or 0
+
+    matches = stats["fixtures"]["played"]["home"] or 1
+
+    attack = gf / matches
+    defense = ga / matches
+
+    # suavizado
+    xg = (attack + 1.2) / 2
+    xga = (defense + 1.2) / 2
+
+    return xg, xga
+
+# =========================
+# ODDS
 # =========================
 
 def get_odds(fid):
@@ -129,13 +192,11 @@ def get_odds(fid):
     if not data:
         return None
 
-    response = data.get("response", [])
-    if not response:
+    res = data.get("response", [])
+    if not res:
         return None
 
-    bookmakers = response[0].get("bookmakers", [])
-
-    for b in bookmakers:
+    for b in res[0].get("bookmakers", []):
 
         if b.get("name") != "Bet365":
             continue
@@ -154,33 +215,6 @@ def get_odds(fid):
     return None
 
 # =========================
-# POISSON SIMPLE
-# =========================
-
-def poisson(lmbda, k):
-    return (math.exp(-lmbda) * lmbda ** k) / math.factorial(k)
-
-def probs(h, a):
-
-    home = draw = away = 0
-
-    for i in range(6):
-        for j in range(6):
-
-            p = poisson(h, i) * poisson(a, j)
-
-            if i > j:
-                home += p
-            elif i == j:
-                draw += p
-            else:
-                away += p
-
-    total = home + draw + away
-
-    return home/total, draw/total, away/total
-
-# =========================
 # EDGE
 # =========================
 
@@ -188,19 +222,7 @@ def edge(prob, odds):
     return prob - (1 / odds)
 
 # =========================
-# SAVE
-# =========================
-
-def save(fid, league, prob):
-
-    c.execute("""
-        INSERT OR REPLACE INTO bets VALUES (?,?,?,NULL)
-    """, (fid, league, prob))
-
-    conn.commit()
-
-# =========================
-# RUN
+# MAIN
 # =========================
 
 def run():
@@ -208,21 +230,21 @@ def run():
     global api_calls
     api_calls = 0
 
-    send("🚀 BOT V6 FIXED INICIADO")
+    send("🚀 V5 PRO INICIADO")
 
-    # CALL 1
     fixtures = get_fixtures()
 
     send(f"📊 Partidos: {len(fixtures)}")
 
-    ranked = sorted(fixtures, key=score_fixture, reverse=True)
-    selected = ranked[:TOP_N]
-
-    send(f"🎯 Seleccionados: {len(selected)}")
-
     picks = 0
 
-    for f in selected:
+    ranked = sorted(
+        fixtures,
+        key=lambda x: league_score(x["league"]["id"]),
+        reverse=True
+    )
+
+    for f in ranked[:TOP_N]:
 
         if api_calls >= MAX_CALLS:
             break
@@ -233,26 +255,30 @@ def run():
         home = f["teams"]["home"]
         away = f["teams"]["away"]
 
-        odds = get_odds(fid)   # CALL 2/3
+        odds = get_odds(fid)
         if not odds:
             continue
 
-        ph, pd, pa = probs(0.55, 0.45)
+        # xG real proxy
+        hxg, hxa = xg_from_team(home["id"])
+        axg, axa = xg_from_team(away["id"])
+
+        ph, pd, pa = probs(hxg, axg)
 
         if "Home" in odds:
 
             o = odds["Home"]
             e = edge(ph, o)
 
-            save(fid, league, ph)
-
-            if e > BASE_EDGE:
+            if e > EDGE_MIN:
 
                 send(f"""
 ⚽ {home['name']} vs {away['name']}
 💰 Cuota: {o}
 📈 Edge: {round(e*100,2)}%
 """)
+
+                update_league(league, True)
 
                 picks += 1
 
@@ -263,10 +289,8 @@ def run():
     send(f"🔌 API calls: {api_calls}")
 
 # =========================
-# LOOP
+# START
 # =========================
 
-send("🚀 BOT INICIADO")
-
-send("🚀 BOT FUNCIONA COMPLETO EN RAILWAY")
-
+send("🚀 BOT V5 ARRANCADO")
+run()
