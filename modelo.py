@@ -268,5 +268,5 @@ def run():
 
 send("🚀 BOT INICIADO")
 
-
+send("🚀 BOT FUNCIONA COMPLETO EN RAILWAY")
 
