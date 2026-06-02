@@ -56,7 +56,29 @@ def fetch(url):
 
 def get_matches():
 
-    url = "https://int.soccerway.com/matches/"
+    url = "https://www.espn.com/soccer/scoreboard"
+
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+
+        if r.status_code != 200:
+            return []
+
+        text = r.text
+
+        matches = []
+
+        # búsqueda simple de patrones de equipos
+        lines = text.split("\n")
+
+        for i in range(len(lines)):
+            if " vs " in lines[i].lower():
+                matches.append(lines[i].strip())
+
+        return matches
+
+    except:
+        return []
 
     html = fetch(url)
     if not html:
