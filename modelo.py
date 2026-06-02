@@ -297,7 +297,7 @@ def main_loop():
 
         now = datetime.now(TZ)
 
-        if 10 <= now.hour < 20:
+        if 10 <= now.hour < 21:
 
             run()
             time.sleep(1800)  # cada 30 min
