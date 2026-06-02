@@ -1,128 +1,93 @@
 import requests
 import math
 import sqlite3
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from bs4 import BeautifulSoup
 
 # =========================
 # CONFIG
 # =========================
 
-API_KEY = "b9bb7b48b07befece1272eb59c391bea"
-TELEGRAM_TOKEN = "8647764005:AAEt7k4vsUpQLMuti6iqGIDBF7ngOJ9vqRA"
-CHAT_ID = "1335805552"
-
-BASE_URL = "https://v3.football.api-sports.io"
-TZ = ZoneInfo("Europe/Madrid")
-
-MAX_CALLS = 100
-TOP_N = 10
-MAX_PICKS = 5
 EDGE_MIN = 0.05
+MAX_PICKS = 5
 
-HEADERS = {"x-apisports-key": API_KEY}
-
-api_calls = 0
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # =========================
-# DB (learning simple)
+# DB
 # =========================
 
-conn = sqlite3.connect("bot_v5.db", check_same_thread=False)
+conn = sqlite3.connect("v10_system.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS league_stats (
-league_id INTEGER PRIMARY KEY,
-score REAL DEFAULT 1
+CREATE TABLE IF NOT EXISTS predictions (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+home TEXT,
+away TEXT,
+prob REAL,
+odds REAL,
+stake REAL,
+result INTEGER,
+ev REAL
 )
 """)
 
 conn.commit()
 
 # =========================
-# TELEGRAM
+# TELEGRAM (opcional)
 # =========================
 
 def send(msg):
+    print(msg)
+
+# =========================
+# SCRAPER MATCHES
+# =========================
+
+def fetch(url):
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=10
-        )
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code != 200:
+            return None
+        return r.text
+    except:
+        return None
+
+def get_matches():
+
+    url = "https://int.soccerway.com/matches/"
+
+    html = fetch(url)
+    if not html:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    matches = []
+
+    for row in soup.find_all("tr"):
+
+        text = row.get_text(" ", strip=True)
+
+        if " - " in text and len(text) < 80:
+            matches.append(text)
+
+    return matches
+
+def clean_match(text):
+
+    try:
+        parts = text.split("-")
+        if len(parts) >= 2:
+            return parts[0].strip(), parts[1].strip()
     except:
         pass
 
-# =========================
-# SAFE REQUEST
-# =========================
-
-def safe_request(url, params=None):
-    global api_calls
-
-    if api_calls >= MAX_CALLS:
-        return None
-
-    try:
-        r = requests.get(url, headers=HEADERS, params=params, timeout=10)
-        api_calls += 1
-
-        if r.status_code != 200:
-            return None
-
-        return r.json()
-
-    except:
-        return None
+    return None, None
 
 # =========================
-# FIXTURES
-# =========================
-
-def get_fixtures():
-
-    data = safe_request(
-        f"{BASE_URL}/fixtures",
-        {"date": datetime.now(TZ).strftime("%Y-%m-%d")}
-    )
-
-    if not data:
-        return []
-
-    return data.get("response", [])
-
-# =========================
-# LEAGUE LEARNING
-# =========================
-
-def league_score(league_id):
-
-    c.execute("SELECT score FROM league_stats WHERE league_id=?", (league_id,))
-    row = c.fetchone()
-
-    if not row:
-        return 1.0
-
-    return row[0]
-
-def update_league(league_id, win):
-
-    score = league_score(league_id)
-
-    if win:
-        score *= 1.02
-    else:
-        score *= 0.98
-
-    c.execute("""
-    INSERT OR REPLACE INTO league_stats VALUES (?,?)
-    """, (league_id, score))
-
-    conn.commit()
-
-# =========================
-# POISSON
+# POISSON MODEL
 # =========================
 
 def poisson(lmbda, k):
@@ -149,148 +114,140 @@ def probs(hxg, axg):
     return home/total, draw/total, away/total
 
 # =========================
-# XG REAL PROXY (MEJORADO)
+# SIMPLE XG MODEL (LOCAL)
 # =========================
 
-def xg_from_team(team_id):
+def xg(team):
 
-    data = safe_request(
-        f"{BASE_URL}/teams/statistics",
-        {"team": team_id, "season": 2024}
-    )
-
-    if not data or not data.get("response"):
-        return 1.2, 1.2
-
-    stats = data["response"]
-
-    gf = stats["goals"]["for"]["total"]["home"] or 0
-    ga = stats["goals"]["against"]["total"]["home"] or 0
-
-    matches = stats["fixtures"]["played"]["home"] or 1
-
-    attack = gf / matches
-    defense = ga / matches
-
-    # suavizado
-    xg = (attack + 1.2) / 2
-    xga = (defense + 1.2) / 2
-
-    return xg, xga
+    # base sin API (mejora con learning)
+    return 1.4, 1.1
 
 # =========================
-# ODDS
+# ODDS (PLACEHOLDER V10)
 # =========================
 
-def get_odds(fid):
+def get_odds(home, away):
 
-    data = safe_request(
-        f"{BASE_URL}/odds",
-        {"fixture": fid}
-    )
-
-    if not data:
-        return None
-
-    res = data.get("response", [])
-    if not res:
-        return None
-
-    for b in res[0].get("bookmakers", []):
-
-        if b.get("name") != "Bet365":
-            continue
-
-        odds = {}
-
-        for bet in b.get("bets", []):
-
-            if bet.get("name") == "Match Winner":
-
-                for v in bet.get("values", []):
-                    odds[v["value"]] = float(v["odd"])
-
-        return odds
-
-    return None
+    return {
+        "Home": 2.00,
+        "Draw": 3.20,
+        "Away": 3.80
+    }
 
 # =========================
-# EDGE
+# EV + KELLY
 # =========================
 
-def edge(prob, odds):
-    return prob - (1 / odds)
+def expected_value(prob, odds):
+    return (prob * odds) - 1
+
+def kelly(prob, odds):
+
+    b = odds - 1
+    q = 1 - prob
+
+    if b == 0:
+        return 0
+
+    k = (b * prob - q) / b
+
+    return max(0, min(k, 0.2))
+
+def is_valid(ev, stake):
+
+    return ev > 0 and stake > 0
 
 # =========================
-# MAIN
+# LEARNING SYSTEM (V10 CORE)
+# =========================
+
+def save_prediction(home, away, prob, odds, stake, ev):
+
+    c.execute("""
+    INSERT INTO predictions (home, away, prob, odds, stake, ev)
+    VALUES (?,?,?,?,?,?)
+    """, (home, away, prob, odds, stake, ev))
+
+    conn.commit()
+
+def model_bias():
+
+    c.execute("SELECT prob, result FROM predictions WHERE result IS NOT NULL")
+
+    data = c.fetchall()
+
+    if len(data) < 20:
+        return 1.0
+
+    error = 0
+
+    for p, r in data:
+        error += (p - r)
+
+    bias = error / len(data)
+
+    return max(0.85, min(1.15, 1 - bias))
+
+def adjust_prob(prob):
+    return prob * model_bias()
+
+# =========================
+# MAIN BOT
 # =========================
 
 def run():
 
-    global api_calls
-    api_calls = 0
+    send("🚀 V10 FULL SYSTEM INICIADO")
 
-    send("🚀 V5 PRO INICIADO")
+    raw_matches = get_matches()
 
-    fixtures = get_fixtures()
+    matches = []
 
-    send(f"📊 Partidos: {len(fixtures)}")
+    for m in raw_matches:
+        home, away = clean_match(m)
+        if home and away:
+            matches.append((home, away))
+
+    send(f"📊 Partidos encontrados: {len(matches)}")
 
     picks = 0
 
-    ranked = sorted(
-        fixtures,
-        key=lambda x: league_score(x["league"]["id"]),
-        reverse=True
-    )
+    for home, away in matches[:20]:
 
-    for f in ranked[:TOP_N]:
-
-        if api_calls >= MAX_CALLS:
-            break
-
-        fid = f["fixture"]["id"]
-        league = f["league"]["id"]
-
-        home = f["teams"]["home"]
-        away = f["teams"]["away"]
-
-        odds = get_odds(fid)
-        if not odds:
-            continue
-
-        # xG real proxy
-        hxg, hxa = xg_from_team(home["id"])
-        axg, axa = xg_from_team(away["id"])
+        hxg, _ = xg(home)
+        axg, _ = xg(away)
 
         ph, pd, pa = probs(hxg, axg)
 
-        if "Home" in odds:
+        ph = adjust_prob(ph)
 
-            o = odds["Home"]
-            e = edge(ph, o)
+        odds = get_odds(home, away)
 
-            if e > EDGE_MIN:
+        ev = expected_value(ph, odds["Home"])
+        stake = kelly(ph, odds["Home"])
 
-                send(f"""
-⚽ {home['name']} vs {away['name']}
-💰 Cuota: {o}
-📈 Edge: {round(e*100,2)}%
+        if is_valid(ev, stake):
+
+            save_prediction(home, away, ph, odds["Home"], stake, ev)
+
+            send(f"""
+⚽ {home} vs {away}
+
+💰 Cuota: {odds['Home']}
+📊 Prob: {round(ph,3)}
+📈 EV: {round(ev,3)}
+💵 Stake: {round(stake*100,2)}%
 """)
 
-                update_league(league, True)
+            picks += 1
 
-                picks += 1
+            if picks >= MAX_PICKS:
+                break
 
-                if picks >= MAX_PICKS:
-                    break
-
-    send(f"✅ Picks: {picks}")
-    send(f"🔌 API calls: {api_calls}")
+    send("✅ V10 COMPLETADO")
 
 # =========================
 # START
 # =========================
 
-send("🚀 BOT V5 ARRANCADO")
 run()
