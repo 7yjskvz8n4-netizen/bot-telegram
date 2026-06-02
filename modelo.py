@@ -1,7 +1,10 @@
 import requests
 import math
 import sqlite3
+import time
 from bs4 import BeautifulSoup
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # =========================
 # CONFIG
@@ -12,11 +15,13 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 EDGE_MIN = 0.05
 MAX_PICKS = 5
 
+TZ = ZoneInfo("Europe/Madrid")
+
 # =========================
-# DB (learning base)
+# DB
 # =========================
 
-conn = sqlite3.connect("v10_clean.db", check_same_thread=False)
+conn = sqlite3.connect("v10_system.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
@@ -41,10 +46,20 @@ def send(msg):
     print(msg)
 
 # =========================
-# FETCH HTML SAFE
+# TIME CONTROL
+# =========================
+
+def is_market_open():
+
+    now = datetime.now(TZ)
+    return 10 <= now.hour < 20
+
+# =========================
+# FETCH SAFE
 # =========================
 
 def fetch(url):
+
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
 
@@ -57,7 +72,7 @@ def fetch(url):
         return None
 
 # =========================
-# GET MATCHES (SCRAPER ESTABLE)
+# GET MATCHES
 # =========================
 
 def get_matches():
@@ -72,21 +87,18 @@ def get_matches():
     for url in urls:
 
         html = fetch(url)
+
         if not html:
             continue
 
-        text = html
+        lines = html.split("\n")
 
-        if " vs " in text.lower():
+        for line in lines:
 
-            lines = text.split("\n")
+            if " vs " in line.lower():
+                matches.append(line.strip())
 
-            for line in lines:
-
-                if " vs " in line.lower():
-                    matches.append(line.strip())
-
-    # fallback si todo falla
+    # fallback seguro
     if len(matches) == 0:
 
         matches = [
@@ -115,13 +127,10 @@ def clean_match(text):
         home = parts[0].strip()
         away = parts[1].strip()
 
-        if home and away:
-            return home, away
+        return home, away
 
     except:
-        pass
-
-    return None, None
+        return None, None
 
 # =========================
 # POISSON MODEL
@@ -151,11 +160,10 @@ def probs(hxg, axg):
     return home/total, draw/total, away/total
 
 # =========================
-# XG SIMPLE MODEL
+# SIMPLE XG
 # =========================
 
 def xg(team):
-
     return 1.4, 1.1
 
 # =========================
@@ -206,12 +214,12 @@ def save(home, away, prob, odds, stake, ev):
     conn.commit()
 
 # =========================
-# MAIN
+# CORE RUN
 # =========================
 
 def run():
 
-    send("🚀 MODELO LIMPIO INICIADO")
+    send("🚀 BOT ACTIVO (VENTANA 10:00–20:00)")
 
     raw = get_matches()
 
@@ -258,14 +266,28 @@ def run():
             if picks >= MAX_PICKS:
                 break
 
-    send("✅ SISTEMA LIMPIO EJECUTADO")
+    send("✅ CICLO COMPLETADO")
+
+# =========================
+# LOOP 24/7 CONTROLADO
+# =========================
+
+def main_loop():
+
+    while True:
+
+        if is_market_open():
+
+            run()
+            time.sleep(1800)  # cada 30 min
+
+        else:
+
+            print("⏳ Mercado cerrado (20:00–10:00)")
+            time.sleep(300)  # check cada 5 min
 
 # =========================
 # START
 # =========================
 
-import time
-
-while True:
-    run()
-    time.sleep(3600)  # 1 vez por hora
+main_loop()
