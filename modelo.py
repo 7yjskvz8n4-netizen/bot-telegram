@@ -300,24 +300,13 @@ def update_result(league_id, win):
 # RUN
 # =========================
 def run():
-    
-    fixtures = get_fixtures()
-
-print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
-send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
-def run():
 
     print("RUN EJECUTADO")
-
-    if not bot_active():
-        print("BOT INACTIVO POR HORARIO")
-        return
-
-    update_league_filter()
 
     fixtures = get_fixtures()
 
     print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
+    send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
 
     picks = 0
 
@@ -340,13 +329,31 @@ def run():
         if not odds:
             continue
 
-        h_stats = strength(home)  # simplificado
+        h_stats = strength(home)
         a_stats = strength(away)
 
         hxg, axg = xg(h_stats, a_stats)
 
         ph, pd, pa = probs(hxg, axg)
 
+        if "Home" in odds and not sent(fid, "HOME"):
+
+            o = odds["Home"]
+
+            e = edge(ph, o, league)
+
+            print(f"{home['name']} vs {away['name']} | Edge={round(e,3)}")
+
+            if e > BASE_EDGE:
+
+                send(f"""
+⚽ {home['name']} vs {away['name']}
+💰 {o}
+📈 Edge: {round(e*100,2)}%
+""")
+
+                mark(fid, "HOME")
+                picks += 1
         # =========================
         # PICK SIMPLE HOME
         # =========================
