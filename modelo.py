@@ -231,14 +231,6 @@ def get_fixtures():
    print(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
 send(f"FIXTURES ENCONTRADOS: {len(fixtures)}")
     
-    r = requests.get(
-        f"{BASE_URL}/fixtures",
-        headers=HEADERS,
-        params={"date": date}
-    )
-
-    return r.json().get("response", [])
-
 # =========================
 # ODDS
 # =========================
