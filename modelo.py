@@ -1,3 +1,5 @@
+print("ARCHIVO MODELO INICIADO")
+1/0
 import requests
 import math
 import sqlite3
